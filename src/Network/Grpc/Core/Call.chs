@@ -134,10 +134,11 @@ callUnary ctx@(ClientContext chan cq _ deadline) method arg mds =
             _ -> return (RpcError (StatusError status statusDetails))
         RpcError err -> return (RpcError err)
 
-data Client o i = Client { clientCrw :: ClientReaderWriter
-                         , clientEncoder :: Encoder o
-                         , clientDecoder :: Decoder i
-                         }
+data Client req resp = Client
+  { clientCrw :: ClientReaderWriter
+  , clientEncoder :: Encoder req
+  , clientDecoder :: Decoder resp
+  }
 
 type Decoder a = L.ByteString -> IO (RpcReply a)
 type Encoder a = a -> IO (RpcReply B.ByteString)
@@ -434,29 +435,29 @@ clientCloseCall ClientReaderWriter { callMVar_ = callMVar } =
   withMVar callMVar $ \call ->
   grpcCallDestroy call
 
-type Rpc o i a = ReaderT (Client o i) (ExceptT RpcError IO) a
+type Rpc req resp a = ReaderT (Client req resp) (ExceptT RpcError IO) a
 
-askCrw :: Rpc o i ClientReaderWriter
+askCrw :: Rpc req resp ClientReaderWriter
 askCrw = asks clientCrw
 
-askDecoder :: Rpc o i (Decoder i)
+askDecoder :: Rpc req resp (Decoder resp)
 askDecoder = asks clientDecoder
 
-askEncoder :: Rpc o i (Encoder o)
+askEncoder :: Rpc req resp (Encoder req)
 askEncoder = asks clientEncoder
 
-joinReply :: RpcReply a -> Rpc o i a
+joinReply :: RpcReply a -> Rpc req resp a
 joinReply (RpcOk a) = return a
 joinReply (RpcError err) = lift (throwE err)
 
-withClient :: Client o i -> Rpc o i a -> IO (RpcReply a)
+withClient :: Client req resp -> Rpc req resp a -> IO (RpcReply a)
 withClient client m = do
   e <- runExceptT (runReaderT m client)
   case e of
     Left err -> return (RpcError err)
     Right a -> return (RpcOk a)
 
-receiveMessage :: Rpc o i (Maybe i)
+receiveMessage :: Rpc req resp (Maybe resp)
 receiveMessage = do
   crw <- askCrw
   msg <- joinReply =<< liftIO (clientRead crw)
@@ -466,7 +467,7 @@ receiveMessage = do
       decoder <- askDecoder
       liftM Just (joinReply =<< liftIO (decoder x))
 
-receiveAllMessages :: Rpc o i [i]
+receiveAllMessages :: Rpc req resp [resp]
 receiveAllMessages = do
   crw <- askCrw
   decoder <- askDecoder
@@ -479,19 +480,19 @@ receiveAllMessages = do
           Nothing -> return (reverse acc)
   go []
 
-sendMessage :: o -> Rpc o i ()
+sendMessage :: req -> Rpc req resp ()
 sendMessage o = do
   crw <- askCrw
   encoder <- askEncoder
   x <- joinReply =<< liftIO (encoder o)
   joinReply =<< liftIO (clientWrite crw x)
 
-sendClose :: Rpc o i ()
+sendClose :: Rpc req resp ()
 sendClose = do
   crw <- askCrw
   joinReply =<< liftIO (clientSendClose crw)
 
-closeCall :: Rpc o i ()
+closeCall :: Rpc req resp ()
 closeCall = do
   crw <- askCrw
   liftIO (clientClose crw)
