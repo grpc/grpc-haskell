@@ -87,7 +87,7 @@ main = do
   grpcInit
   BC8.putStrLn version
   channel <- grpcInsecureChannelCreate "localhost:10000" (ChannelArgs nullPtr) reservedPtr
-  deadline <- secondsFromNow 2
+  deadline <- secondsFromNow 1
   ctx <- withTimeout deadline <$> newClientContext channel
   putStrLn "==================== getFeature1"
   print =<< measure "getFeature1" (getFeature createRouteGuideClient ctx (Point 2 2) [Metadata "my-metadata-key" "foo" 0])
@@ -117,7 +117,7 @@ main = do
   putStrLn "==================== recordRoute"
   RpcOk record <- recordRoute createRouteGuideClient ctx
   rt <- withClient record $ do
-    forM_ [ Point x x | x <- [0..20] ] $ \p -> do
+    forM_ [ Point x x | x <- [0..20] ] $ \p ->
       sendMessage (fromPoint p)
     sendClose
     x <- receiveMessage
@@ -134,14 +134,13 @@ main = do
   _ <- forkIO $ do -- the go example does this in a concurrent thread
         --initMetadata <- getInitialMetadata recvInitMetadata
         --putStrLn ("got initial metadata: " ++ show initMetadata)
-        RpcOk msgs <- withClient route $ receiveAllMessages
+        RpcOk msgs <- withClient route receiveAllMessages
         putMVar block msgs
   RpcOk _ <- withClient route $ do
     mapM_ sendMessage notes
-  msgs <- takeMVar block
-  RpcOk _ <- withClient route $ do
     sendClose
-    closeCall
+  msgs <- takeMVar block
+  RpcOk _ <- withClient route closeCall
   putStrLn ("got " ++ show (length msgs) ++ " messages")
   putStrLn "==================== PASSED"
 
