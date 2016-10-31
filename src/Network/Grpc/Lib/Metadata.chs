@@ -47,7 +47,6 @@ import qualified Foreign.Marshal.Array as C
 import qualified Foreign.Storable as C
 
 import Control.Monad
-import Control.Exception
 import Data.Word (Word8)
 
 import qualified Data.ByteString as B
