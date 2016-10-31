@@ -25,7 +25,14 @@
 --
 --------------------------------------------------------------------------------
 {-# LANGUAGE StandaloneDeriving, ForeignFunctionInterface, OverloadedStrings #-}
-module Network.Grpc.Lib.ByteBuffer where
+module Network.Grpc.Lib.ByteBuffer
+  ( CByteBuffer
+  , fromByteString
+  , addBBFinalizer
+  , toLazyByteString
+
+  , CByteBufferReader
+  ) where
 
 import Foreign.C.Types
 import Foreign.ForeignPtr
