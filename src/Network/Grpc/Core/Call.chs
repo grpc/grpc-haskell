@@ -129,7 +129,7 @@ callUnary ctx@(ClientContext chan cq _ deadline) method arg mds =
             StatusOk -> do
               initMD <- opRead recvInitialMetadataOp
               answ <- opRead recvMessageOp
-              let answ' = maybe mempty id answ
+              let answ' = maybe L.empty id answ
               return (RpcOk (UnaryResult initMD trailMD answ'))
             _ -> return (RpcError (StatusError status statusDetails))
         RpcError err -> return (RpcError err)
@@ -336,7 +336,7 @@ opRecvStatusOnClient (ClientReaderWriter{..}) = do
       ]
     finish = do
       trailingMd <- readMetadataArray trailingMetadataArrPtr
-      statusCode <- toStatusCode <$> C.peek statusCodePtr
+      statusCode <- fmap toStatusCode (C.peek statusCodePtr)
       statusDetails <- B.packCString =<< C.peek ptrPtrStatusStr
       let status = RpcStatus trailingMd statusCode statusDetails
       writeIORef value status
@@ -509,16 +509,6 @@ callBidi ctx@(ClientContext chan cq _ deadline) method = do
     case res of
       RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
       RpcError err -> return (RpcError err)
-
-assertCallOk :: CallError -> IO ()
-assertCallOk CallOk = return ()
-assertCallOk status = gprAssert ("call status: " ++ show status)
-
-gprAssert :: Show a => a -> IO b
-gprAssert = throwIO . GprAssertException . show
-
-data GprAssertException = GprAssertException String deriving Show
-instance Exception GprAssertException
 
 data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 

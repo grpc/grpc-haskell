@@ -68,7 +68,7 @@ instance Storable Event where
   peek p
     | p == nullPtr = return QueueTimeOut
     | otherwise = do
-        typ <- (toEnum . fromIntegral) <$> {#get grpc_event->type#} p
+        typ <- fmap (toEnum . fromIntegral) $ {#get grpc_event->type#} p
         case typ of
           EnumQueueShutdown -> do
             return QueueShutdown

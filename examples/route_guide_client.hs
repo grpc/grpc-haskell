@@ -88,7 +88,7 @@ main = do
   BC8.putStrLn version
   channel <- grpcInsecureChannelCreate "localhost:10000" (ChannelArgs nullPtr) reservedPtr
   deadline <- secondsFromNow 1
-  ctx <- withTimeout deadline <$> newClientContext channel
+  ctx <- fmap (withTimeout deadline) (newClientContext channel)
   putStrLn "==================== getFeature1"
   print =<< measure "getFeature1" (getFeature createRouteGuideClient ctx (Point 2 2) [Metadata "my-metadata-key" "foo" 0])
   putStrLn "==================== PASSED"

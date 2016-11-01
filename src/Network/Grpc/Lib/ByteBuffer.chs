@@ -24,7 +24,7 @@
 -- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --
 --------------------------------------------------------------------------------
-{-# LANGUAGE StandaloneDeriving, ForeignFunctionInterface, OverloadedStrings #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 module Network.Grpc.Lib.ByteBuffer
   ( CByteBuffer
   , fromByteString
@@ -98,7 +98,7 @@ toLazyByteString bb =
   bracket
     (byteBufferReaderInit bb)
     (byteBufferReaderDestroy)
-    (\bbr -> L.fromChunks <$> go bbr [])
+    (\bbr -> fmap L.fromChunks (go bbr []))
   where
     go bbr acc = do
       (tag, slice) <- byteBufferReaderNext bbr
