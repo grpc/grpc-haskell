@@ -33,15 +33,21 @@ import           Control.Exception
 import           System.Console.GetOpt
 import           System.Environment
 import           System.Exit
+import           System.Mem
 
-import qualified Data.ByteString           as B
-import qualified Data.ByteString.Char8     as C8
-import qualified Data.ByteString.Lazy      as L
+import qualified Data.ByteString                       as B
+import qualified Data.ByteString.Char8                 as C8
+import qualified Data.ByteString.Lazy                  as L
 
 import           Network.Grpc.Core.Call
 import           Network.Grpc.Lib.Grpc
 import           Network.Grpc.Lib.TimeSpec
 import           Network.Grpc.Lib.Types
+
+import           Data.Default.Class                    (def)
+import           Data.ProtoLens                        (decodeMessage,
+                                                        encodeMessage)
+import           Proto.Src.Proto.Grpc.Testing.Messages
 
 data Options = Options
   { optServerHost            :: String
@@ -57,6 +63,7 @@ data Options = Options
 
 data TestCase
   = EmptyUnary
+  | LargeUnary
   | TestCaseUnknown String
 
 defaultOptions :: Options
@@ -79,6 +86,7 @@ stringToBool _      = False
 
 testCase :: String -> TestCase
 testCase "empty_unary" = EmptyUnary
+testCase "large_unary" = LargeUnary
 testCase unknown       = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
@@ -134,7 +142,7 @@ main = do
 
 runTest :: TestCase -> Options -> IO ()
 runTest EmptyUnary opts = runEmptyUnaryTest opts
-
+runTest LargeUnary opts = runLargeUnaryTest opts
 runTest (TestCaseUnknown tc) _ = do
   putStrLn ("Unknown test case, or not specified: " ++ tc)
   exitFailure
@@ -158,7 +166,7 @@ hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
 -- It may be possible to use UnaryCall instead of EmptyCall, but it is harder
 -- to ensure that the proto serialized to zero bytes.
 runEmptyUnaryTest :: Options -> IO ()
-runEmptyUnaryTest opts = flip finally grpcShutdown $ do
+runEmptyUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
   grpcInit
   bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
@@ -170,6 +178,52 @@ runEmptyUnaryTest opts = flip finally grpcShutdown $ do
           | otherwise -> do
               putStrLn "Non zero reply, failure."
               exitFailure
+        RpcError err -> do
+          print err
+          exitFailure
+
+-- | This test verifies unary calls succeed in sending messages, and touches
+-- on flow control (even if compression is enabled on the channel).
+-- Server features:
+--  - UnaryCall
+-- Procedure:
+--  1. Client calls UnaryCall with:
+--     {
+--       response_size: 314159
+--       payload:{
+--         body: 271828 bytes of zeros
+--       }
+--     }
+-- Client asserts:
+--  - call was successful
+--  - response payload body is 314159 bytes in size
+--  - clients are free to assert that the response payload body contents are
+--      zero and comparing the entire response message against a golden
+--      response.
+runLargeUnaryTest :: Options -> IO ()
+runLargeUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
+  let req = def { _SimpleRequest'responseSize = 314159
+                , _SimpleRequest'payload = Just def {
+                    _Payload'body = B.replicate 271828 0
+                  }
+                }
+  grpcInit
+  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+    deadline <- secondsFromNow 1
+    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
+      B.writeFile "req" (encodeMessage req)
+      resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" (encodeMessage req) []
+      case resp of
+        RpcOk (UnaryResult _ _ resp') ->
+          case decodeMessage (L.toStrict resp') of
+            Left err -> putStrLn ("proto decoder says: " ++ err) >> exitFailure
+            Right msg ->
+              case _SimpleResponse'payload msg of
+                Nothing -> putStrLn "no payload" >> exitFailure
+                Just payload ->
+                  case B.length (_Payload'body payload) of
+                    314159 -> putStrLn "all good"
+                    n -> putStrLn ("wrong payload: " ++ show n) >> exitFailure
         RpcError err -> do
           print err
           exitFailure
