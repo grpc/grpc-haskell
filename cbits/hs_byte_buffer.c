@@ -35,3 +35,8 @@ grpc_byte_buffer *hs_raw_byte_buffer_create(const char *source, size_t len) {
     gpr_slice_unref(slice);
     return bb;
 }
+
+void hs_grpc_byte_buffer_reader_readall(grpc_byte_buffer_reader *reader, gpr_slice *out_slice) {
+	gpr_slice tmp = grpc_byte_buffer_reader_readall(reader);
+	memcpy(out_slice, &tmp, sizeof(gpr_slice));
+}

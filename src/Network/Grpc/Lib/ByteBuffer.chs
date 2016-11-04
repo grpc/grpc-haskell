@@ -30,16 +30,20 @@ module Network.Grpc.Lib.ByteBuffer
   , fromByteString
   , addBBFinalizer
   , toLazyByteString
+  , byteBufferLength
+  , mallocCByteBuffer
+  , freeCByteBuffer
+  , byteBufferDestroy
 
   , CByteBufferReader
   ) where
 
 import Foreign.C.Types
 import Foreign.ForeignPtr
-import Foreign.Marshal.Alloc
+import Foreign.Marshal.Alloc as C
 import Foreign.Ptr
 
-import Control.Exception (bracket)
+import Control.Exception (finally)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -54,11 +58,25 @@ import qualified Data.ByteString.Lazy as L
 
 data CByteBuffer
 {#pointer *byte_buffer as ByteBuffer foreign -> CByteBuffer#}
+
+mallocCByteBuffer :: IO (Ptr CByteBuffer)
+mallocCByteBuffer =
+  C.mallocBytes {#sizeof grpc_byte_buffer#}
+
+freeCByteBuffer :: Ptr CByteBuffer -> IO ()
+freeCByteBuffer =
+  C.free
+
+{#fun unsafe byte_buffer_destroy as ^
+  {`ByteBuffer'} -> `()' #}
+
 data CByteBufferReader
 {#pointer *byte_buffer_reader as ByteBufferReader -> CByteBufferReader#}
 
 data CSlice
 {#pointer *gpr_slice as Slice -> CSlice#}
+
+type SizeT = {#type size_t#}
 
 fromByteString :: ByteString -> IO ByteBuffer
 fromByteString = hsRawByteBufferCreate
@@ -94,22 +112,22 @@ toByteString slice = do
       B.packCStringLen (castPtr ptr, fromIntegral len)
 
 toLazyByteString :: ByteBuffer -> IO L.ByteString
-toLazyByteString bb = withForeignPtr bb $ \_ -> do
-  bracket
-    (byteBufferReaderInit bb)
-    (byteBufferReaderDestroy)
-    (\bbr -> fmap L.fromChunks (go bbr []))
+toLazyByteString bb = withForeignPtr bb $ \_ ->
+  allocaByteBufferReader $ \ bbr ->
+  allocaSlice $ \slice -> do
+    ok <- byteBufferReaderInit bbr bb
+    if ok
+      then finally (go bbr slice []) (byteBufferReaderDestroy bbr)
+      else return L.empty -- TODO: assert
   where
-    go bbr acc = do
-      (tag, slice) <- byteBufferReaderNext bbr
-      case tag of
-        0 -> return $ reverse acc
-        _ -> do
+    go bbr slice acc = do
+      ok <- byteBufferReaderNext bbr slice
+      if ok
+        then do
           bs <- toByteString slice
-          go bbr (bs:acc)
-
-{#fun unsafe byte_buffer_reader_init as ^
-  {allocaByteBufferReader- `ByteBufferReader' id, `ByteBuffer'} -> `()' #}
+          gprSliceUnref slice
+          go bbr slice (bs:acc)
+        else return $! L.fromChunks (reverse acc)
 
 allocaSlice :: (Slice -> IO a) -> IO a
 allocaSlice act = do
@@ -119,8 +137,31 @@ allocaByteBufferReader :: (ByteBufferReader -> IO a) -> IO a
 allocaByteBufferReader act = do
   allocaBytes {#sizeof grpc_byte_buffer_reader#} $ \p -> act p
 
-{#fun unsafe byte_buffer_reader_next as ^
-  {`ByteBufferReader', allocaSlice- `Slice' id} -> `Int' fromIntegral#}
+-- | Initialize a 'ByteBufferReader' for the given 'ByteBuffer'.
+-- If return True, the initialization was successful and the caller is
+-- responsible for calling 'byteBufferReaderDestroy'.
+{#fun unsafe byte_buffer_reader_init as ^
+  {`ByteBufferReader', `ByteBuffer'} -> `Bool' #}
 
+-- | Updates the 'Slice' with the next piece of data from the reader
+-- and returns True. Returns False at the end of the stream. The caller
+-- is responsible for calling 'gpr_slice_unref' on the result.
+{#fun unsafe byte_buffer_reader_next as ^
+  {`ByteBufferReader', `Slice'} -> `Bool'#}
+
+-- | Clean up a 'ByteBufferReader'.
 {#fun unsafe byte_buffer_reader_destroy as ^
   {`ByteBufferReader'} -> `()'#}
+
+-- | /O(1)/. Return the length of a 'ByteBuffer'.
+{#fun unsafe byte_buffer_length as ^
+  {`ByteBuffer'} -> `SizeT' id #}
+
+-- | Updates the 'Slice' with a slice of all the data merged.
+{#fun unsafe hs_grpc_byte_buffer_reader_readall as ^
+  {`ByteBufferReader', `Slice'} -> `()' #}
+
+-- | Unref a 'Slice'. When the reference counter reaches zero, the slice will
+-- be deallocated.
+{#fun unsafe gpr_slice_unref as ^
+  {%`Slice'} -> `()' #}

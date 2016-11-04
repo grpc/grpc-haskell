@@ -285,19 +285,22 @@ opSendMessage bs = do
 
 opRecvMessage :: IO (OpT (Maybe L.ByteString))
 opRecvMessage = do
-  bb <- C.malloc :: IO (Ptr (Ptr CByteBuffer))
+  bbptr <- C.malloc :: IO (Ptr (Ptr CByteBuffer))
   value <- newIORef Nothing
   let
     add =
       [ \p -> do
         {#set grpc_op->op#} p (fromIntegral (fromEnum OpRecvMessage))
-        {#set grpc_op->data.recv_message#} p bb
+        {#set grpc_op->data.recv_message#} p bbptr
       ]
     finish = do
-      recvBb <- C.peek bb
-      C.free bb
-      writeIORef value =<< if recvBb /= C.nullPtr
-        then liftM Just (addBBFinalizer recvBb >>= toLazyByteString)
+      bb <- C.peek bbptr
+      C.free bbptr
+      writeIORef value =<< if bb /= C.nullPtr
+        then do
+          fbb <- addBBFinalizer bb
+          lbs <- toLazyByteString fbb
+          return (Just lbs)
         else return Nothing
   return (Op add value finish)
 
