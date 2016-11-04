@@ -65,6 +65,7 @@ data TestCase
   = EmptyUnary
   | LargeUnary
   | TestCaseUnknown String
+  deriving Show
 
 defaultOptions :: Options
 defaultOptions = Options
@@ -174,7 +175,7 @@ runEmptyUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
       resp <- callUnary ctx "/grpc.testing.TestService/EmptyCall" B.empty []
       case resp of
         RpcOk (UnaryResult _ _ msg)
-          | L.null msg -> putStrLn "all good"
+          | L.null msg -> putStrLn (show (optTestCase opts) ++  " all good")
           | otherwise -> do
               putStrLn "Non zero reply, failure."
               exitFailure
@@ -222,7 +223,7 @@ runLargeUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
                 Nothing -> putStrLn "no payload" >> exitFailure
                 Just payload ->
                   case B.length (_Payload'body payload) of
-                    314159 -> putStrLn "all good"
+                    314159 -> putStrLn (show (optTestCase opts) ++  " all good")
                     n -> putStrLn ("wrong payload: " ++ show n) >> exitFailure
         RpcError err -> do
           print err
