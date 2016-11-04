@@ -94,7 +94,7 @@ toByteString slice = do
       B.packCStringLen (castPtr ptr, fromIntegral len)
 
 toLazyByteString :: ByteBuffer -> IO L.ByteString
-toLazyByteString bb =
+toLazyByteString bb = withForeignPtr bb $ \_ -> do
   bracket
     (byteBufferReaderInit bb)
     (byteBufferReaderDestroy)
