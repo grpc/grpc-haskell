@@ -275,12 +275,12 @@ opSendMessage bs = do
   value <- newIORef ()
   let
     add =
-      [ \p -> C.withForeignPtr bb $ \bb' -> do
+      [ \p -> do
         {#set grpc_op->op#} p (fromIntegral (fromEnum OpSendMessage))
-        {#set grpc_op->data.send_message#} p bb'
+        {#set grpc_op->data.send_message#} p bb
       ]
-    finish = do
-      C.withForeignPtr bb $ \_ -> return () --touch
+    finish =
+      byteBufferDestroy bb
   return (Op add value finish)
 
 opRecvMessage :: IO (OpT (Maybe L.ByteString))
@@ -298,8 +298,8 @@ opRecvMessage = do
       C.free bbptr
       writeIORef value =<< if bb /= C.nullPtr
         then do
-          fbb <- addBBFinalizer bb
-          lbs <- toLazyByteString fbb
+          lbs <- toLazyByteString bb
+          byteBufferDestroy bb
           return (Just lbs)
         else return Nothing
   return (Op add value finish)

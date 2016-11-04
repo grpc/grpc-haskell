@@ -27,8 +27,8 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 module Network.Grpc.Lib.ByteBuffer
   ( CByteBuffer
+  , ByteBuffer
   , fromByteString
-  , addBBFinalizer
   , toLazyByteString
   , byteBufferLength
   , mallocCByteBuffer
@@ -57,7 +57,7 @@ import qualified Data.ByteString.Lazy as L
 {#context lib = "grpc" prefix = "grpc" #}
 
 data CByteBuffer
-{#pointer *byte_buffer as ByteBuffer foreign -> CByteBuffer#}
+{#pointer *byte_buffer as ByteBuffer -> CByteBuffer#}
 
 mallocCByteBuffer :: IO (Ptr CByteBuffer)
 mallocCByteBuffer =
@@ -87,13 +87,7 @@ withByteString bs act = do
   withForeignPtr fPtr $ \ptr -> act (ptr `plusPtr` offset, fromIntegral len)
 
 {#fun unsafe hs_raw_byte_buffer_create as ^
-  {withByteString* `ByteString'&} -> `ByteBuffer' addBBFinalizer* #}
-
-addBBFinalizer :: Ptr CByteBuffer -> IO ByteBuffer
-addBBFinalizer bb = newForeignPtr grpc_byte_buffer_destroy bb
-
-foreign import ccall "Network/Grpc/Core/ByteBuffer.chs.h &grpc_byte_buffer_destroy"
-  grpc_byte_buffer_destroy :: FinalizerPtr CByteBuffer
+  {withByteString* `ByteString'&} -> `ByteBuffer' #}
 
 toByteString :: Slice -> IO ByteString
 toByteString slice = do
@@ -112,7 +106,7 @@ toByteString slice = do
       B.packCStringLen (castPtr ptr, fromIntegral len)
 
 toLazyByteString :: ByteBuffer -> IO L.ByteString
-toLazyByteString bb = withForeignPtr bb $ \_ ->
+toLazyByteString bb =
   allocaByteBufferReader $ \ bbr ->
   allocaSlice $ \slice -> do
     ok <- byteBufferReaderInit bbr bb
