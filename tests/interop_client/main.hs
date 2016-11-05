@@ -30,6 +30,7 @@
 module Main where
 
 import           Control.Exception
+import           Control.Monad
 import           System.Console.GetOpt
 import           System.Environment
 import           System.Exit
@@ -64,8 +65,15 @@ data Options = Options
 data TestCase
   = EmptyUnary
   | LargeUnary
+  | AllTests
   | TestCaseUnknown String
   deriving Show
+
+allTests :: [TestCase]
+allTests =
+  [ EmptyUnary
+  , LargeUnary
+  ]
 
 defaultOptions :: Options
 defaultOptions = Options
@@ -88,6 +96,7 @@ stringToBool _      = False
 testCase :: String -> TestCase
 testCase "empty_unary" = EmptyUnary
 testCase "large_unary" = LargeUnary
+testCase "all"         = AllTests
 testCase unknown       = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
@@ -139,14 +148,32 @@ main = do
       putStrLn (usageInfo "Usage: interop_client [OPTION]" options)
       exitFailure
     Right opts -> return opts
-  runTest (optTestCase opts) opts
+  case optTestCase opts of
+    AllTests ->
+      forM_ allTests $ \tc -> do
+        let opts' = opts { optTestCase = tc }
+        testWrapper tc (runTest tc opts')
+    tc ->
+      testWrapper tc (runTest tc opts)
 
-runTest :: TestCase -> Options -> IO ()
+testWrapper :: TestCase -> IO (Either String ()) -> IO ()
+testWrapper tc act =
+  bracket_
+    grpcInit
+    (performMajorGC >> grpcShutdown)
+    (do
+      result <- act
+      case result of
+        Right _ -> putStrLn (show tc ++ ": ok")
+        Left err -> do
+          putStrLn err
+          exitFailure)
+
+runTest :: TestCase -> Options -> IO (Either String ())
 runTest EmptyUnary opts = runEmptyUnaryTest opts
 runTest LargeUnary opts = runLargeUnaryTest opts
-runTest (TestCaseUnknown tc) _ = do
-  putStrLn ("Unknown test case, or not specified: " ++ tc)
-  exitFailure
+runTest (TestCaseUnknown tc) _ =
+  return (Left ("Unknown test case, or not specified: " ++ tc))
 
 hostPort :: Options -> B.ByteString
 hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
@@ -166,22 +193,17 @@ hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
 --
 -- It may be possible to use UnaryCall instead of EmptyCall, but it is harder
 -- to ensure that the proto serialized to zero bytes.
-runEmptyUnaryTest :: Options -> IO ()
-runEmptyUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
-  grpcInit
+runEmptyUnaryTest :: Options -> IO (Either String ())
+runEmptyUnaryTest opts =
   bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx "/grpc.testing.TestService/EmptyCall" B.empty []
       case resp of
         RpcOk (UnaryResult _ _ msg)
-          | L.null msg -> putStrLn (show (optTestCase opts) ++  " all good")
-          | otherwise -> do
-              putStrLn "Non zero reply, failure."
-              exitFailure
-        RpcError err -> do
-          print err
-          exitFailure
+          | L.null msg -> return (Right ())
+          | otherwise -> return (Left "Non zero reply, failure.")
+        RpcError err -> return (Left (show err))
 
 -- | This test verifies unary calls succeed in sending messages, and touches
 -- on flow control (even if compression is enabled on the channel).
@@ -201,30 +223,26 @@ runEmptyUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
 --  - clients are free to assert that the response payload body contents are
 --      zero and comparing the entire response message against a golden
 --      response.
-runLargeUnaryTest :: Options -> IO ()
-runLargeUnaryTest opts = flip finally (performMajorGC >> grpcShutdown) $ do
+runLargeUnaryTest :: Options -> IO (Either String ())
+runLargeUnaryTest opts = do
   let req = def { _SimpleRequest'responseSize = 314159
                 , _SimpleRequest'payload = Just def {
                     _Payload'body = B.replicate 271828 0
                   }
                 }
-  grpcInit
   bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      B.writeFile "req" (encodeMessage req)
       resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" (encodeMessage req) []
       case resp of
         RpcOk (UnaryResult _ _ resp') ->
           case decodeMessage (L.toStrict resp') of
-            Left err -> putStrLn ("proto decoder says: " ++ err) >> exitFailure
+            Left err -> return (Left ("proto decoder says: " ++ err))
             Right msg ->
               case _SimpleResponse'payload msg of
-                Nothing -> putStrLn "no payload" >> exitFailure
+                Nothing -> return (Left "no payload")
                 Just payload ->
                   case B.length (_Payload'body payload) of
-                    314159 -> putStrLn (show (optTestCase opts) ++  " all good")
-                    n -> putStrLn ("wrong payload: " ++ show n) >> exitFailure
-        RpcError err -> do
-          print err
-          exitFailure
+                    314159 -> return (Right ())
+                    n      -> return (Left ("wrong payload: " ++ show n))
+        RpcError err -> return (Left (show err))
