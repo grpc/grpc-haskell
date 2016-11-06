@@ -97,8 +97,8 @@ main = do
   putStrLn "==================== PASSED"
   putStrLn "==================== listFeatures"
   let rect = Rectangle (Point 0 0) (Point 16 16)
-  RpcOk reader <- listFeatures createRouteGuideClient ctx rect
-  features' <- withClient reader $ do
+  reader <- listFeatures createRouteGuideClient ctx rect
+  features' <- withNewClient reader $ do
     let
       readAll acc = do
         msg <- receiveMessage
