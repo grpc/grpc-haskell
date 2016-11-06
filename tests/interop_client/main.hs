@@ -68,7 +68,8 @@ data Options = Options
 }
 
 data TestCase
-  = EmptyUnary
+  = EmptyStream
+  | EmptyUnary
   | LargeUnary
   | CustomMetadata
   | UnimplementedMethod
@@ -78,7 +79,8 @@ data TestCase
 
 allTests :: [TestCase]
 allTests =
-  [ EmptyUnary
+  [ EmptyStream
+  , EmptyUnary
   , LargeUnary
   , CustomMetadata
   , UnimplementedMethod
@@ -103,6 +105,7 @@ stringToBool "TRUE" = True
 stringToBool _      = False
 
 testCase :: String -> TestCase
+testCase "empty_stream"         = EmptyStream
 testCase "empty_unary"          = EmptyUnary
 testCase "large_unary"          = LargeUnary
 testCase "custom_metadata"      = CustomMetadata
@@ -181,6 +184,7 @@ testWrapper tc act =
           exitFailure)
 
 runTest :: TestCase -> Options -> IO (Either String ())
+runTest EmptyStream opts = runEmptyStreamTest opts
 runTest EmptyUnary opts = runEmptyUnaryTest opts
 runTest LargeUnary opts = runLargeUnaryTest opts
 runTest CustomMetadata opts = runCustomMetadataTest opts
@@ -383,3 +387,30 @@ runUnimplementedMethodTest opts =
         RpcError (StatusError StatusUnimplemented "") -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
         RpcOk _ -> return (Left "RPC succeeded, it should have failed.")
+
+-- |This test verifies that streams support having zero-messages in both
+-- directions.
+-- Server features:
+--  - FullDuplexCall
+-- Procedure:
+--  1. Client calls FullDuplexCall and then half-closes
+-- Client asserts:
+--  - call was successful
+--  - exactly zero responses
+runEmptyStreamTest :: Options -> IO (Either String ())
+runEmptyStreamTest opts =
+  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+    deadline <- secondsFromNow 1
+    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
+      client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" []
+      resp <- withNewClient client $ do
+        sendClose
+        msgs <- receiveAllMessages
+        closeCall
+        return msgs
+      case resp of
+        RpcOk msgs
+          | null msgs -> return (Right ())
+          | otherwise -> return (Left ("expected no messages, got " ++ show msgs))
+        RpcError err ->
+          return (Left (show err))
