@@ -129,7 +129,7 @@ main = do
   putStrLn "==================== PASSED"
 
   putStrLn "==================== async routeChat"
-  RpcOk route <- routeChat createRouteGuideClient ctx
+  RpcOk route <- routeChat createRouteGuideClient ctx []
   block <- newEmptyMVar
   _ <- forkIO $ do -- the go example does this in a concurrent thread
         --initMetadata <- getInitialMetadata recvInitMetadata
@@ -197,7 +197,7 @@ data RouteGuideClient = RouteGuideClient {
   getFeature   :: ClientContext -> Point -> [Metadata] -> IO (RpcReply (UnaryResult L.ByteString)),
   listFeatures :: ClientContext -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString)),
   recordRoute  :: ClientContext -> IO (RpcReply (Client B.ByteString RouteSummary)),
-  routeChat    :: ClientContext -> IO (RpcReply (Client B.ByteString L.ByteString))
+  routeChat    :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 }
 
 createRouteGuideClient :: RouteGuideClient
@@ -208,7 +208,7 @@ createRouteGuideClient = RouteGuideClient {
     callDownstream ctx listFeaturesMethodName (fromRectangle rect),
   recordRoute = \ctx ->
     callUpstream ctx recordRouteMethodName,
-  routeChat = \ctx ->
-    callBidi ctx routeChatMethodName
+  routeChat = \ctx mds ->
+    callBidi ctx routeChatMethodName mds
 }
 

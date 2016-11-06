@@ -518,13 +518,13 @@ closeCall = do
   crw <- askCrw
   liftIO (clientClose crw)
 
-callBidi :: ClientContext -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
-callBidi ctx@(ClientContext chan cq _ deadline) method = do
+callBidi :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
+callBidi ctx@(ClientContext chan cq _ deadline) method mds = do
   C.withForeignPtr chan $ \chanPtr -> do
     mcall <- grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline >>= newMVar
 
     crw <- newClientReaderWriter ctx mcall
-    sendInitOp <- opSendInitialMetadata []
+    sendInitOp <- opSendInitialMetadata mds
 
     res <- callBatch crw [ OpX sendInitOp ]
     case res of
