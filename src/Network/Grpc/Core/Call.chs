@@ -411,18 +411,23 @@ recvMessage crw = do
       putStrLn "recvMessage: callBatch failed"
       return (RpcError err)
 
-clientWaitForStatus :: ClientReaderWriter -> IO (RpcReply ())
+clientWaitForStatus :: ClientReaderWriter -> IO (RpcReply RpcStatus)
 clientWaitForStatus crw@(ClientReaderWriter{..}) = do
   status <- readIORef statusFromServer
   case status of
     Nothing -> do
       recvStatusOp <- opRecvStatusOnClient crw
-      callBatch crw [ OpX recvStatusOp ]
-    Just _ -> return (RpcOk ())
+      res <- callBatch crw [ OpX recvStatusOp ]
+      case res of
+        RpcOk _ -> do
+          st <- opRead recvStatusOp
+          return (RpcOk st)
+        RpcError err -> do
+          return (RpcError err)
+    Just st -> return (RpcOk st)
 
 clientClose :: ClientReaderWriter -> IO ()
 clientClose (ClientReaderWriter{..}) = do
-  -- clientWaitForStatus crw
   withMVar callMVar_ $ \call ->
     grpcCallDestroy call
 
@@ -462,6 +467,16 @@ withClient client m = do
   case e of
     Left err -> return (RpcError err)
     Right a -> return (RpcOk a)
+
+initialMetadata :: Rpc req resp [Metadata]
+initialMetadata = do
+  crw <- askCrw
+  joinReply =<< liftIO (clientWaitForInitialMetadata crw)
+
+waitForStatus :: Rpc req resp RpcStatus
+waitForStatus = do
+  crw <- askCrw
+  joinReply =<< liftIO (clientWaitForStatus crw)
 
 receiveMessage :: Rpc req resp (Maybe resp)
 receiveMessage = do
