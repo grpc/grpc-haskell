@@ -461,6 +461,12 @@ joinReply :: RpcReply a -> Rpc req resp a
 joinReply (RpcOk a) = return a
 joinReply (RpcError err) = lift (throwE err)
 
+withNewClient :: RpcReply (Client req resp) -> Rpc req resp a -> IO (RpcReply a)
+withNewClient r_client m = do
+  case r_client of
+    RpcOk client -> withClient client m
+    RpcError err -> return (RpcError err)
+
 withClient :: Client req resp -> Rpc req resp a -> IO (RpcReply a)
 withClient client m = do
   e <- runExceptT (runReaderT m client)
