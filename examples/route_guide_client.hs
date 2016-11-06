@@ -115,8 +115,8 @@ main = do
   putStrLn "==================== PASSED"
 
   putStrLn "==================== recordRoute"
-  RpcOk record <- recordRoute createRouteGuideClient ctx
-  rt <- withClient record $ do
+  record <- recordRoute createRouteGuideClient ctx
+  rt <- withNewClient record $ do
     forM_ [ Point x x | x <- [0..20] ] $ \p ->
       sendMessage (fromPoint p)
     sendClose

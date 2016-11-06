@@ -345,20 +345,17 @@ runCustomMetadataTest opts = do
       bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
         deadline <- secondsFromNow 1
         bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-          resp <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" metadata
-          case resp of
-            RpcOk resp' -> do
-              mds <- withClient resp' $ do
-                sendMessage (encodeMessage req)
-                sendClose
-                _ <- receiveMessage
-                initMd <- initialMetadata
-                (RpcStatus trailMd _ _) <- waitForStatus
-                closeCall
-                return (initMd, trailMd)
-              case mds of
-                RpcOk (initMd, trailMd) ->
-                  checkMetadata initMd trailMd
-                RpcError err ->
-                  return (Left (show err))
-            RpcError err -> return (Left (show err))
+          client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" metadata
+          mds <- withNewClient client $ do
+            sendMessage (encodeMessage req)
+            sendClose
+            _ <- receiveMessage
+            initMd <- initialMetadata
+            (RpcStatus trailMd _ _) <- waitForStatus
+            closeCall
+            return (initMd, trailMd)
+          case mds of
+            RpcOk (initMd, trailMd) ->
+              checkMetadata initMd trailMd
+            RpcError err ->
+              return (Left (show err))
