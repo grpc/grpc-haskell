@@ -62,6 +62,9 @@ import Data.ByteString (ByteString)
 
 data Metadata = Metadata !ByteString !ByteString !{#type uint32_t#} deriving (Show)
 
+instance Eq Metadata where
+  (Metadata a b _) == (Metadata x y _) = (a,b) == (x,y)
+
 instance C.Storable Metadata where
   sizeOf _ = {#sizeof grpc_metadata#}
   alignment _ = {#alignof grpc_metadata#}
