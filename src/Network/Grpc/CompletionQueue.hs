@@ -78,7 +78,7 @@ runWorker cq (Worker { cqEventMap = emap, cqFinished = signalFinished }) = go
         QueueTimeOut -> return ()
         QueueShutdown -> do
           completionQueueDestroy cq
-          putStrLn "** runWorker exiting"
+          -- putStrLn "** runWorker exiting"
           b <- tryPutMVar signalFinished ()
           unless b $ putStrLn "** runWorker: error; multiple workers"
         QueueOpComplete _ tag -> do

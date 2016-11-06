@@ -228,11 +228,11 @@ callBatch crw ops = do
     arr <- toArray ops
     callStatus <- withMVar (callMVar_ crw) $ \call ->
       grpcCallStartBatch call (opArrPtr arr) (opArrLen arr) (CQ.eventTag eDesc) reservedPtr
-    print ("callStatus: " ++ show callStatus)
+    -- print ("callStatus: " ++ show callStatus)
     case callStatus of
       CallOk -> do
         e <- CQ.interruptibleWaitEvent eDesc
-        print ("event: " ++ show e)
+        -- print ("event: " ++ show e)
         opArrFree arr -- TODO: We leak if we're interrupted.
         case e of
           QueueOpComplete OpSuccess _ -> return (RpcOk ())
@@ -240,7 +240,7 @@ callBatch crw ops = do
           QueueTimeOut -> return (RpcError DeadlineExceeded)
           QueueShutdown -> return (RpcError (Error "queue shutdown"))
       _ -> do
-         print callStatus
+         -- print callStatus
          return (RpcError (CallErrorStatus callStatus))
 
 data OpT out = Op
@@ -369,7 +369,6 @@ opSendCloseFromClient = do
 
 clientWaitForInitialMetadata :: ClientReaderWriter -> IO (RpcReply [Metadata])
 clientWaitForInitialMetadata crw@(ClientReaderWriter { .. }) = do
-  putStrLn "clientWaitForInitialMetadata(..)"
   initMD <- readIORef initialMDRef
   case initMD of
     Just md -> return (RpcOk md)
@@ -379,28 +378,23 @@ clientWaitForInitialMetadata crw@(ClientReaderWriter { .. }) = do
       case res of
         RpcOk _ -> do
           md <- opRead recvInitialMetadataOp
-          putStrLn ("metadata: " ++ show md)
           writeIORef initialMDRef (Just md)
           return (RpcOk md)
-        RpcError err -> do
-          putStrLn "clientWaitForInitialMetadata: callBatch failed"
+        RpcError err ->
           return (RpcError err)
 
 clientReadInitialMetadata :: ClientReaderWriter -> IO (RpcReply (Maybe [Metadata]))
 clientReadInitialMetadata (ClientReaderWriter {..}) = do
-  putStrLn "clientReadInitialMetadata(..)"
   md <- readIORef initialMDRef
   return (RpcOk md)
 
 clientRead :: ClientReaderWriter -> IO (RpcReply (Maybe L.ByteString))
 clientRead crw = do
-  putStrLn "clientRead(..)"
   _ <- clientWaitForInitialMetadata crw
   recvMessage crw
 
 recvMessage :: ClientReaderWriter -> IO (RpcReply (Maybe L.ByteString))
 recvMessage crw = do
-  putStrLn "recvMessage(..)"
   recvMessageOp <- opRecvMessage
   res <- callBatch crw [ OpX recvMessageOp ]
   case res of
