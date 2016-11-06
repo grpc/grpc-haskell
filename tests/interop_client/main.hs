@@ -42,13 +42,18 @@ import qualified Data.ByteString.Lazy                  as L
 
 import           Network.Grpc.Core.Call
 import           Network.Grpc.Lib.Grpc
+import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.TimeSpec
 import           Network.Grpc.Lib.Types
 
 import           Data.Default.Class                    (def)
 import           Data.ProtoLens                        (decodeMessage,
                                                         encodeMessage)
-import           Proto.Src.Proto.Grpc.Testing.Messages
+import           Proto.Src.Proto.Grpc.Testing.Messages (Payload (..),
+                                                        ResponseParameters (..),
+                                                        SimpleRequest (..),
+                                                        SimpleResponse (..),
+                                                        StreamingOutputCallRequest (..))
 
 data Options = Options
   { optServerHost            :: String
@@ -65,6 +70,7 @@ data Options = Options
 data TestCase
   = EmptyUnary
   | LargeUnary
+  | CustomMetadata
   | AllTests
   | TestCaseUnknown String
   deriving Show
@@ -73,6 +79,7 @@ allTests :: [TestCase]
 allTests =
   [ EmptyUnary
   , LargeUnary
+  , CustomMetadata
   ]
 
 defaultOptions :: Options
@@ -94,10 +101,11 @@ stringToBool "TRUE" = True
 stringToBool _      = False
 
 testCase :: String -> TestCase
-testCase "empty_unary" = EmptyUnary
-testCase "large_unary" = LargeUnary
-testCase "all"         = AllTests
-testCase unknown       = TestCaseUnknown unknown
+testCase "empty_unary"     = EmptyUnary
+testCase "large_unary"     = LargeUnary
+testCase "custom_metadata" = CustomMetadata
+testCase "all"             = AllTests
+testCase unknown           = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
 options =
@@ -172,6 +180,7 @@ testWrapper tc act =
 runTest :: TestCase -> Options -> IO (Either String ())
 runTest EmptyUnary opts = runEmptyUnaryTest opts
 runTest LargeUnary opts = runLargeUnaryTest opts
+runTest CustomMetadata opts = runCustomMetadataTest opts
 runTest (TestCaseUnknown tc) _ =
   return (Left ("Unknown test case, or not specified: " ++ tc))
 
@@ -246,3 +255,110 @@ runLargeUnaryTest opts = do
                     314159 -> return (Right ())
                     n      -> return (Left ("wrong payload: " ++ show n))
         RpcError err -> return (Left (show err))
+
+
+-- | This test verifies that custom metadata in either binary or ascii format can be
+-- sent as initial-metadata by the client and as both initial- and trailing-metadata
+-- by the server.
+-- Server features:
+--  - UnaryCall
+--  - FullDuplexCall
+--  - Echo Metadata
+-- Procedure:
+--  1. The client attaches custom metadata with the following keys and values:
+--     ```
+--     key: "x-grpc-test-echo-initial", value: "test_initial_metadata_value"
+--     key: "x-grpc-test-echo-trailing-bin", value: 0xababab
+--     ```
+--     to a UnaryCall with request:
+--     ```
+--     {
+--       response_size: 314159
+--       payload:{
+--         body: 271828 bytes of zeros
+--       }
+--     }
+--     ```
+--  2. The client attaches custom metadata with the following keys and values:
+--     ```
+--     key: "x-grpc-test-echo-initial", value: "test_initial_metadata_value"
+--     key: "x-grpc-test-echo-trailing-bin", value: 0xababab
+--     ```
+--     to a FullDuplexCall with request:
+--     ```
+--     {
+--       response_size: 314159
+--       payload:{
+--         body: 271828 bytes of zeros
+--       }
+--     }
+--     ```
+--     and then half-closes
+--
+-- Client asserts:
+--  - call was successful
+--  - metadata with key `"x-grpc-test-echo-initial"` and value
+--      `"test_initial_metadata_value"`is received in the initial metadata for calls
+--      in Procedure steps 1 and 2.
+--  - metadata with key `"x-grpc-test-echo-trailing-bin"` and value `0xababab` is
+--      received in the trailing metadata for calls in Procedure steps 1 and 2.
+runCustomMetadataTest :: Options -> IO (Either String ())
+runCustomMetadataTest opts = do
+  resp <- procedure1
+  case resp of
+    Left err -> return (Left err)
+    Right () -> procedure2
+  where
+    expectedInitMd = Metadata "x-grpc-test-echo-initial" "test_initial_metadata_value" 0
+    expectedTrailMd = Metadata "x-grpc-test-echo-trailing-bin" "\x0a\x0b\x0a\x0b\x0a\x0b" 0
+    metadata = [ expectedInitMd, expectedTrailMd ]
+
+    checkMetadata :: [Metadata] -> [Metadata] -> IO (Either String ())
+    checkMetadata initMd trailMd
+      | initMd /= [expectedInitMd] = return (Left ("wrong initial metadata, got " ++ show initMd))
+      | trailMd /= [expectedTrailMd] = return (Left ("wrong trailing metadata, got " ++ show trailMd))
+      | otherwise = return (Right ())
+
+    procedure1 :: IO (Either String ())
+    procedure1 = do
+      let
+        req = def { _SimpleRequest'responseSize = 314159
+                  , _SimpleRequest'payload = Just def {
+                      _Payload'body = B.replicate 271828 0 }
+                  }
+      bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+        deadline <- secondsFromNow 1
+        bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
+          resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" (encodeMessage req) metadata
+          case resp of
+            RpcOk (UnaryResult initMd trailMd _) ->
+              checkMetadata initMd trailMd
+            RpcError err ->
+              return (Left (show err))
+
+    procedure2 :: IO (Either String ())
+    procedure2 = do
+      let
+        req = def { _StreamingOutputCallRequest'responseParameters = [ def { _ResponseParameters'size = 314159 } ]
+                  , _StreamingOutputCallRequest'payload = Just def { _Payload'body = B.replicate 271828 0 }
+                  }
+      bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+        deadline <- secondsFromNow 1
+        bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
+          resp <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" metadata
+          case resp of
+            RpcOk resp' -> do
+              mds <- withClient resp' $ do
+                sendMessage (encodeMessage req)
+                sendClose
+                _ <- receiveMessage
+                initMd <- initialMetadata
+                (RpcStatus trailMd _ _) <- waitForStatus
+                closeCall
+                return (initMd, trailMd)
+              case mds of
+                RpcOk (initMd, trailMd) ->
+                  checkMetadata initMd trailMd
+                RpcError err ->
+                  return (Left (show err))
+            RpcError err -> return (Left (show err))
