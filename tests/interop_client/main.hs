@@ -356,7 +356,7 @@ runCustomMetadataTest opts = do
           client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" metadata
           mds <- withNewClient client $ do
             sendMessage (encodeMessage req)
-            sendClose
+            sendHalfClose
             _ <- receiveMessage
             initMd <- initialMetadata
             (RpcStatus trailMd _ _) <- waitForStatus
@@ -404,7 +404,7 @@ runEmptyStreamTest opts =
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
       client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" []
       resp <- withNewClient client $ do
-        sendClose
+        sendHalfClose
         msgs <- receiveAllMessages
         closeCall
         return msgs

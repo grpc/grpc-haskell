@@ -430,8 +430,8 @@ clientWrite crw@(ClientReaderWriter{..}) arg = do
   sendMessageOp <- opSendMessage arg
   callBatch crw [ OpX sendMessageOp ]
 
-clientSendClose :: ClientReaderWriter -> IO (RpcReply ())
-clientSendClose crw@(ClientReaderWriter{..}) = do
+clientSendHalfClose :: ClientReaderWriter -> IO (RpcReply ())
+clientSendHalfClose crw@(ClientReaderWriter{..}) = do
   sendCloseOp <- opSendCloseFromClient
   callBatch crw [ OpX sendCloseOp ]
 
@@ -508,10 +508,10 @@ sendMessage o = do
   x <- joinReply =<< liftIO (encoder o)
   joinReply =<< liftIO (clientWrite crw x)
 
-sendClose :: Rpc req resp ()
-sendClose = do
+sendHalfClose :: Rpc req resp ()
+sendHalfClose = do
   crw <- askCrw
-  joinReply =<< liftIO (clientSendClose crw)
+  joinReply =<< liftIO (clientSendHalfClose crw)
 
 closeCall :: Rpc req resp ()
 closeCall = do

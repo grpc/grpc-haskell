@@ -119,7 +119,7 @@ main = do
   rt <- withNewClient record $ do
     forM_ [ Point x x | x <- [0..20] ] $ \p ->
       sendMessage (fromPoint p)
-    sendClose
+    sendHalfClose
     x <- receiveMessage
     closeCall
     return x
@@ -138,7 +138,7 @@ main = do
         putMVar block msgs
   RpcOk _ <- withClient route $ do
     mapM_ sendMessage notes
-    sendClose
+    sendHalfClose
   msgs <- takeMVar block
   RpcOk _ <- withClient route closeCall
   putStrLn ("got " ++ show (length msgs) ++ " messages")
