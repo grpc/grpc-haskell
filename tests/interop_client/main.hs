@@ -71,6 +71,7 @@ data TestCase
   = EmptyUnary
   | LargeUnary
   | CustomMetadata
+  | UnimplementedMethod
   | AllTests
   | TestCaseUnknown String
   deriving Show
@@ -80,6 +81,7 @@ allTests =
   [ EmptyUnary
   , LargeUnary
   , CustomMetadata
+  , UnimplementedMethod
   ]
 
 defaultOptions :: Options
@@ -101,11 +103,12 @@ stringToBool "TRUE" = True
 stringToBool _      = False
 
 testCase :: String -> TestCase
-testCase "empty_unary"     = EmptyUnary
-testCase "large_unary"     = LargeUnary
-testCase "custom_metadata" = CustomMetadata
-testCase "all"             = AllTests
-testCase unknown           = TestCaseUnknown unknown
+testCase "empty_unary"          = EmptyUnary
+testCase "large_unary"          = LargeUnary
+testCase "custom_metadata"      = CustomMetadata
+testCase "unimplemented_method" = UnimplementedMethod
+testCase "all"                  = AllTests
+testCase unknown                = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
 options =
@@ -181,6 +184,7 @@ runTest :: TestCase -> Options -> IO (Either String ())
 runTest EmptyUnary opts = runEmptyUnaryTest opts
 runTest LargeUnary opts = runLargeUnaryTest opts
 runTest CustomMetadata opts = runCustomMetadataTest opts
+runTest UnimplementedMethod opts = runUnimplementedMethodTest opts
 runTest (TestCaseUnknown tc) _ =
   return (Left ("Unknown test case, or not specified: " ++ tc))
 
@@ -359,3 +363,23 @@ runCustomMetadataTest opts = do
               checkMetadata initMd trailMd
             RpcError err ->
               return (Left (show err))
+
+-- | This test verifies calling unimplemented RPC method returns the UNIMPLEMENTED
+-- status code.
+-- Server features: N/A
+-- Procedure:
+--  1. Client calls grpc.testing.UnimplementedService/UnimplementedCall with an empty
+--     request (defined as grpc.testing.Empty):
+-- Client asserts:
+--  - received status code is 12 (UNIMPLEMENTED)
+--  - received status message is empty or null/unset
+runUnimplementedMethodTest :: Options -> IO (Either String ())
+runUnimplementedMethodTest opts =
+  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+    deadline <- secondsFromNow 1
+    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
+      resp <- callUnary ctx "/grpc.testing.UnimplementedService/UnimplementedCall" B.empty []
+      case resp of
+        RpcError (StatusError StatusUnimplemented "") -> return (Right ())
+        RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
+        RpcOk _ -> return (Left "RPC succeeded, it should have failed.")
