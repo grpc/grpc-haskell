@@ -59,7 +59,7 @@ data Options = Options
   { optServerHost            :: String
   , optServerHostOverride    :: String
   , optServerPort            :: Int
-  , optTestCase              :: TestCase
+  , optTestCase              :: TestCaseFlag
   , optUseTLS                :: Bool
   , optUseTestCA             :: Bool
   , optDefaultServiceAccount :: String
@@ -67,24 +67,21 @@ data Options = Options
   , optServiceAccountKeyFile :: FilePath
 }
 
+data TestCaseFlag
+  = TestCase TestCase
+  | AllTests
+  | TestCaseUnknown String
+
 data TestCase
   = EmptyStream
   | EmptyUnary
   | LargeUnary
   | CustomMetadata
   | UnimplementedMethod
-  | AllTests
-  | TestCaseUnknown String
-  deriving Show
+  deriving (Bounded, Enum, Show)
 
 allTests :: [TestCase]
-allTests =
-  [ EmptyStream
-  , EmptyUnary
-  , LargeUnary
-  , CustomMetadata
-  , UnimplementedMethod
-  ]
+allTests = [ minBound .. maxBound ]
 
 defaultOptions :: Options
 defaultOptions = Options
@@ -104,12 +101,12 @@ stringToBool "true" = True
 stringToBool "TRUE" = True
 stringToBool _      = False
 
-testCase :: String -> TestCase
-testCase "empty_stream"         = EmptyStream
-testCase "empty_unary"          = EmptyUnary
-testCase "large_unary"          = LargeUnary
-testCase "custom_metadata"      = CustomMetadata
-testCase "unimplemented_method" = UnimplementedMethod
+testCase :: String -> TestCaseFlag
+testCase "empty_stream"         = TestCase EmptyStream
+testCase "empty_unary"          = TestCase EmptyUnary
+testCase "large_unary"          = TestCase LargeUnary
+testCase "custom_metadata"      = TestCase CustomMetadata
+testCase "unimplemented_method" = TestCase UnimplementedMethod
 testCase "all"                  = AllTests
 testCase unknown                = TestCaseUnknown unknown
 
@@ -164,10 +161,11 @@ main = do
     Right opts -> return opts
   case optTestCase opts of
     AllTests ->
-      forM_ allTests $ \tc -> do
-        let opts' = opts { optTestCase = tc }
-        testWrapper tc (runTest tc opts')
-    tc ->
+      forM_ allTests $ \tc ->
+        testWrapper tc (runTest tc opts)
+    TestCaseUnknown tc ->
+      putStrLn ("Unknown or not specified test case: " ++ tc)
+    TestCase tc ->
       testWrapper tc (runTest tc opts)
 
 testWrapper :: TestCase -> IO (Either String ()) -> IO ()
@@ -189,8 +187,6 @@ runTest EmptyUnary opts = runEmptyUnaryTest opts
 runTest LargeUnary opts = runLargeUnaryTest opts
 runTest CustomMetadata opts = runCustomMetadataTest opts
 runTest UnimplementedMethod opts = runUnimplementedMethodTest opts
-runTest (TestCaseUnknown tc) _ =
-  return (Left ("Unknown test case, or not specified: " ++ tc))
 
 hostPort :: Options -> B.ByteString
 hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
