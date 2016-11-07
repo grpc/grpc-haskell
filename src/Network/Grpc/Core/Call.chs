@@ -104,6 +104,8 @@ onceMVar mvar io = modifyMVar mvar $ \x ->
 reservedPtr :: Ptr ()
 reservedPtr = C.nullPtr
 
+data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
+
 callUnary :: ClientContext -> MethodName -> Arg -> [Metadata] -> IO (RpcReply (UnaryResult L.ByteString))
 callUnary ctx@(ClientContext chan cq _ deadline) method arg mds =
   C.withForeignPtr chan $ \chanPtr ->
@@ -136,21 +138,6 @@ callUnary ctx@(ClientContext chan cq _ deadline) method arg mds =
               return (RpcOk (UnaryResult initMD trailMD answ'))
             _ -> return (RpcError (StatusError status statusDetails))
         RpcError err -> return (RpcError err)
-
-data Client req resp = Client
-  { clientCrw :: ClientReaderWriter
-  , clientEncoder :: Encoder req
-  , clientDecoder :: Decoder resp
-  }
-
-type Decoder a = L.ByteString -> IO (RpcReply a)
-type Encoder a = a -> IO (RpcReply B.ByteString)
-
-defaultDecoder :: L.ByteString -> IO (RpcReply L.ByteString)
-defaultDecoder bs = return (RpcOk bs)
-
-defaultEncoder :: B.ByteString -> IO (RpcReply B.ByteString)
-defaultEncoder bs = return (RpcOk bs)
 
 callDownstream :: ClientContext -> MethodName -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
 callDownstream ctx@(ClientContext chan cq _ deadline) method arg =
@@ -185,6 +172,34 @@ callUpstream ctx@(ClientContext chan cq _ deadline) method =
       RpcOk _ -> do
         return (RpcOk (Client crw defaultEncoder defaultDecoder))
       RpcError err -> return (RpcError err)
+
+callBidi :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
+callBidi ctx@(ClientContext chan cq _ deadline) method mds = do
+  C.withForeignPtr chan $ \chanPtr -> do
+    mcall <- grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline >>= newMVar
+
+    crw <- newClientReaderWriter ctx mcall
+    sendInitOp <- opSendInitialMetadata mds
+
+    res <- callBatch crw [ OpX sendInitOp ]
+    case res of
+      RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
+      RpcError err -> return (RpcError err)
+
+data Client req resp = Client
+  { clientCrw :: ClientReaderWriter
+  , clientEncoder :: Encoder req
+  , clientDecoder :: Decoder resp
+  }
+
+type Decoder a = L.ByteString -> IO (RpcReply a)
+type Encoder a = a -> IO (RpcReply B.ByteString)
+
+defaultDecoder :: L.ByteString -> IO (RpcReply L.ByteString)
+defaultDecoder bs = return (RpcOk bs)
+
+defaultEncoder :: B.ByteString -> IO (RpcReply B.ByteString)
+defaultEncoder bs = return (RpcOk bs)
 
 data ClientReaderWriter = ClientReaderWriter {
   context :: ClientContext,
@@ -517,21 +532,6 @@ closeCall :: Rpc req resp ()
 closeCall = do
   crw <- askCrw
   liftIO (clientClose crw)
-
-callBidi :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
-callBidi ctx@(ClientContext chan cq _ deadline) method mds = do
-  C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline >>= newMVar
-
-    crw <- newClientReaderWriter ctx mcall
-    sendInitOp <- opSendInitialMetadata mds
-
-    res <- callBatch crw [ OpX sendInitOp ]
-    case res of
-      RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
-      RpcError err -> return (RpcError err)
-
-data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 
 data RpcReply a
   = RpcOk a
