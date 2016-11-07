@@ -215,7 +215,7 @@ runEmptyUnaryTest opts =
   bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx "/grpc.testing.TestService/EmptyCall" B.empty []
+      resp <- callUnary ctx "/grpc.testing.TestService/EmptyCall" [] B.empty
       case resp of
         RpcOk (UnaryResult _ _ msg)
           | L.null msg -> return (Right ())
@@ -250,7 +250,7 @@ runLargeUnaryTest opts = do
   bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" (encodeMessage req) []
+      resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" [] (encodeMessage req)
       case resp of
         RpcOk (UnaryResult _ _ resp') ->
           case decodeMessage (L.toStrict resp') of
@@ -337,7 +337,7 @@ runCustomMetadataTest opts = do
       bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
         deadline <- secondsFromNow 1
         bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-          resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" (encodeMessage req) metadata
+          resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" metadata (encodeMessage req)
           case resp of
             RpcOk (UnaryResult initMd trailMd _) ->
               checkMetadata initMd trailMd
@@ -382,7 +382,7 @@ runUnimplementedMethodTest opts =
   bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx "/grpc.testing.UnimplementedService/UnimplementedCall" B.empty []
+      resp <- callUnary ctx "/grpc.testing.UnimplementedService/UnimplementedCall" [] B.empty
       case resp of
         RpcError (StatusError StatusUnimplemented "") -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
