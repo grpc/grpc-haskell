@@ -64,6 +64,79 @@ recordRouteMethodName = "/routeguide.RouteGuide/RecordRoute"
 routeChatMethodName :: B.ByteString
 routeChatMethodName = "/routeguide.RouteGuide/RouteChat"
 
+main :: IO ()
+main = withGrpc main'
+
+main' :: IO ()
+main' = do
+  BC8.putStrLn version
+  channel <- createInsecureChannel "localhost:10000" mempty
+  deadline <- secondsFromNow 1
+  ctx <- fmap (withTimeout deadline) (newClientContext channel)
+
+  measure "getFeature 1" $ do
+    res <- getFeature createRouteGuideClient ctx [Metadata "my-metadata-key" "foo" 0] (Point 2 2)
+    print res
+
+  measure "getFeature 2" $ do
+    res <- getFeature createRouteGuideClient ctx [] (Point 42 42)
+    print res
+
+  measure "listFeatures" $ do
+    let rect = Rectangle (Point 0 0) (Point 16 16)
+    reader <- listFeatures createRouteGuideClient ctx [] rect
+    features' <- withNewClient reader $ do
+      let
+        readAll acc = do
+          msg <- receiveMessage
+          case msg of
+            Just m -> do
+              liftIO $ putStrLn ("got message: " ++ show m)
+              readAll (m:acc)
+            Nothing -> do
+              liftIO $ putStrLn "No more messages"
+              closeCall
+              return (reverse acc)
+      readAll []
+    print features'
+
+  measure "recordRoute" $ do
+    record <- recordRoute createRouteGuideClient ctx []
+    rt <- withNewClient record $ do
+      forM_ [ Point x x | x <- [0..20] ] $ \p ->
+        sendMessage (fromPoint p)
+      sendHalfClose
+      x <- receiveMessage
+      closeCall
+      return x
+      -- initMetadata' <- getInitialMetadata recvInitMetadata
+      -- putStrLn ("got initial metadata: " ++ show initMetadata')
+    print rt
+
+  measure "async routeChat" $ do
+    RpcOk route <- routeChat createRouteGuideClient ctx []
+    block <- newEmptyMVar
+    _ <- forkIO $ do -- the go example does this in a concurrent thread
+          --initMetadata <- getInitialMetadata recvInitMetadata
+          --putStrLn ("got initial metadata: " ++ show initMetadata)
+          RpcOk msgs <- withClient route receiveAllMessages
+          putMVar block msgs
+    RpcOk _ <- withClient route $ do
+      mapM_ sendMessage notes
+      sendHalfClose
+    msgs <- takeMVar block
+    RpcOk _ <- withClient route closeCall
+    putStrLn ("got " ++ show (length msgs) ++ " messages")
+
+  putStrLn "*** Destroying channel"
+  grpcChannelDestroy channel
+  putStrLn "*** Shutting down client context"
+  destroyClientContext ctx
+
+-- ----------------------------------------------
+-- Example data
+-- ----------------------------------------------
+
 -- | RouteNotes
 notes :: [B.ByteString]
 notes = map (B.pack . f)
@@ -80,102 +153,30 @@ notes = map (B.pack . f)
     f (a:b:c) = hex a b : f c
     f _ = []
 
-main :: IO ()
-main = do
-  grpcInit
-  BC8.putStrLn version
-  channel <- createInsecureChannel "localhost:10000" mempty
-  deadline <- secondsFromNow 1
-  ctx <- fmap (withTimeout deadline) (newClientContext channel)
-  putStrLn "==================== getFeature1"
-  print =<< measure "getFeature1" (getFeature createRouteGuideClient ctx [Metadata "my-metadata-key" "foo" 0] (Point 2 2))
-  putStrLn "==================== PASSED"
-  putStrLn "==================== getFeature2"
-  print =<< measure "getFeature2" (getFeature createRouteGuideClient ctx [] (Point 42 42))
-  putStrLn "==================== PASSED"
-  putStrLn "==================== listFeatures"
-  let rect = Rectangle (Point 0 0) (Point 16 16)
-  reader <- listFeatures createRouteGuideClient ctx [] rect
-  features' <- withNewClient reader $ do
-    let
-      readAll acc = do
-        msg <- receiveMessage
-        case msg of
-          Just m -> do
-            liftIO $ putStrLn ("got message: " ++ show m)
-            readAll (m:acc)
-          Nothing -> do
-            liftIO $ putStrLn "No more messages"
-            closeCall
-            return (reverse acc)
-    readAll []
-  print features'
-  putStrLn "==================== PASSED"
+-- ----------------------------------------------
+-- Utils
+-- ----------------------------------------------
 
-  putStrLn "==================== recordRoute"
-  record <- recordRoute createRouteGuideClient ctx []
-  rt <- withNewClient record $ do
-    forM_ [ Point x x | x <- [0..20] ] $ \p ->
-      sendMessage (fromPoint p)
-    sendHalfClose
-    x <- receiveMessage
-    closeCall
-    return x
-    -- initMetadata' <- getInitialMetadata recvInitMetadata
-    -- putStrLn ("got initial metadata: " ++ show initMetadata')
-  print rt
-  putStrLn "==================== PASSED"
-
-  putStrLn "==================== async routeChat"
-  RpcOk route <- routeChat createRouteGuideClient ctx []
-  block <- newEmptyMVar
-  _ <- forkIO $ do -- the go example does this in a concurrent thread
-        --initMetadata <- getInitialMetadata recvInitMetadata
-        --putStrLn ("got initial metadata: " ++ show initMetadata)
-        RpcOk msgs <- withClient route receiveAllMessages
-        putMVar block msgs
-  RpcOk _ <- withClient route $ do
-    mapM_ sendMessage notes
-    sendHalfClose
-  msgs <- takeMVar block
-  RpcOk _ <- withClient route closeCall
-  putStrLn ("got " ++ show (length msgs) ++ " messages")
-  putStrLn "==================== PASSED"
-
-  putStrLn "*** Destroying channel"
-  grpcChannelDestroy channel
-  putStrLn "*** Shutting down client context"
-  destroyClientContext ctx
-  putStrLn "*** Doing major GC"
-  performMajorGC
-  putStrLn "*** grpc shutdown"
-  grpcShutdown
-
-unfoldM :: (Monad m) => m (Maybe a) -> m [a]
-unfoldM act = go []
-  where
-    go acc = do
-      x <- act
-      case x of
-        Nothing -> return (reverse acc)
-        Just x' -> go (x':acc)
-
-unfoldM' :: Show a => IO (Maybe a) -> IO [a]
-unfoldM' act = go []
-  where
-    go acc = do
-      x <- act
-      case x of
-        Nothing -> return (reverse acc)
-        Just x' -> print x' >> go (x':acc)
+withGrpc :: IO a -> IO a
+withGrpc = bracket_ grpcInit (performMajorGC >> grpcShutdown)
 
 measure :: String -> IO a -> IO a
 measure desc io = bracket aquire release (\_ -> io)
   where
-    aquire = getCurrentTime
+    aquire = do
+      putStrLn "###"
+      putStrLn ("### " ++ desc)
+      putStrLn "###"
+      getCurrentTime
     release start = do
       end <- getCurrentTime
-      putStrLn (desc ++ ": " ++ show (diffUTCTime end start))
+      putStrLn (" - timing: " ++ show (diffUTCTime end start))
+      putStrLn ""
+      putStrLn ""
+
+-- -------------------------------------------------------
+-- A proto library should generate the stub and data types
+-- -------------------------------------------------------
 
 data Rectangle = Rectangle Point Point
 
@@ -186,8 +187,6 @@ data Point = Point Word8 Word8
 
 fromPoint :: Point -> B.ByteString
 fromPoint (Point a b) = B.pack [0x08, a, 0x10, b]
-
-data Feature = Feature String Point
 
 type RouteSummary = L.ByteString
 
