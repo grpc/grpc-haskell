@@ -50,6 +50,7 @@ import           Network.Grpc.Lib.TimeSpec
 import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.Version
 import           Network.Grpc.Lib.Grpc
+import           Network.Grpc.Lib.Types
 
 
 getFeatureMethodName :: B.ByteString
@@ -74,17 +75,19 @@ main' = do
   deadline <- secondsFromNow 1
   ctx <- fmap (withTimeout deadline) (newClientContext channel)
 
+  let routeGuideClient = createRouteGuideClient channel
+
   measure "getFeature 1" $ do
-    res <- getFeature createRouteGuideClient ctx [Metadata "my-metadata-key" "foo" 0] (Point 2 2)
+    res <- getFeature routeGuideClient (Point 2 2)
     print res
 
   measure "getFeature 2" $ do
-    res <- getFeature createRouteGuideClient ctx [] (Point 42 42)
+    res <- getFeature routeGuideClient (Point 42 42)
     print res
 
   measure "listFeatures" $ do
     let rect = Rectangle (Point 0 0) (Point 16 16)
-    reader <- listFeatures createRouteGuideClient ctx [] rect
+    reader <- listFeatures routeGuideClient rect
     features' <- withNewClient reader $ do
       let
         readAll acc = do
@@ -101,7 +104,7 @@ main' = do
     print features'
 
   measure "recordRoute" $ do
-    record <- recordRoute createRouteGuideClient ctx []
+    record <- recordRoute routeGuideClient
     rt <- withNewClient record $ do
       forM_ [ Point x x | x <- [0..20] ] $ \p ->
         sendMessage (fromPoint p)
@@ -114,7 +117,7 @@ main' = do
     print rt
 
   measure "async routeChat" $ do
-    RpcOk route <- routeChat createRouteGuideClient ctx []
+    RpcOk route <- routeChat routeGuideClient
     block <- newEmptyMVar
     _ <- forkIO $ do -- the go example does this in a concurrent thread
           --initMetadata <- getInitialMetadata recvInitMetadata
@@ -191,21 +194,52 @@ fromPoint (Point a b) = B.pack [0x08, a, 0x10, b]
 type RouteSummary = L.ByteString
 
 data RouteGuideClient = RouteGuideClient {
-  getFeature   :: ClientContext -> [Metadata] -> Point -> IO (RpcReply (UnaryResult L.ByteString)),
-  listFeatures :: ClientContext -> [Metadata] -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString)),
-  recordRoute  :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString RouteSummary)),
-  routeChat    :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
+  _channel      :: Channel,
+  _callOptions  :: (),
+  _getFeature   :: ClientContext -> [Metadata] -> Point -> IO (RpcReply (UnaryResult L.ByteString)),
+  _listFeatures :: ClientContext -> [Metadata] -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString)),
+  _recordRoute  :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString RouteSummary)),
+  _routeChat    :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 }
 
-createRouteGuideClient :: RouteGuideClient
-createRouteGuideClient = RouteGuideClient {
-  getFeature = \ctx md arg ->
+getFeature :: RouteGuideClient -> Point -> IO (RpcReply (UnaryResult L.ByteString))
+getFeature client arg =
+  bracket
+    (newClientContext (_channel client))
+    destroyClientContext
+    (\ctx -> _getFeature client ctx [] arg)
+
+listFeatures :: RouteGuideClient -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString))
+listFeatures client arg =
+  bracket
+    (newClientContext (_channel client))
+    destroyClientContext
+    (\ctx -> _listFeatures client ctx [] arg)
+
+recordRoute :: RouteGuideClient -> IO (RpcReply (Client B.ByteString RouteSummary))
+recordRoute client =
+  bracket
+    (newClientContext (_channel client))
+    destroyClientContext
+    (\ctx -> _recordRoute client ctx [])
+
+routeChat :: RouteGuideClient -> IO (RpcReply (Client B.ByteString L.ByteString))
+routeChat client =
+  bracket
+    (newClientContext (_channel client))
+    destroyClientContext
+    (\ctx -> _routeChat client ctx [])
+
+createRouteGuideClient :: Channel -> RouteGuideClient
+createRouteGuideClient chan = RouteGuideClient {
+  _channel = chan,
+  _callOptions = (),
+  _getFeature = \ctx md arg ->
     callUnary ctx getFeatureMethodName md (fromPoint arg),
-  listFeatures = \ctx md arg ->
+  _listFeatures = \ctx md arg ->
     callDownstream ctx listFeaturesMethodName md (fromRectangle arg),
-  recordRoute = \ctx md ->
+  _recordRoute = \ctx md ->
     callUpstream ctx recordRouteMethodName md,
-  routeChat = \ctx md ->
+  _routeChat = \ctx md ->
     callBidi ctx routeChatMethodName md
 }
-
