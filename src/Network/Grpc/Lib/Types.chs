@@ -24,13 +24,19 @@
 -- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --
 --------------------------------------------------------------------------------
+{-# LANGUAGE ViewPatterns #-}
 module Network.Grpc.Lib.Types where
 
+import Data.List(genericLength)
 import Foreign.C.Types
 import Foreign.Marshal.Utils
 import Foreign.Marshal.Alloc
 import Foreign.Storable
 import Foreign.Ptr
+
+import qualified Data.ByteString as B
+
+import qualified Data.HashMap.Strict as Map
 
 {#import Network.Grpc.Lib.TimeSpec#}
 
@@ -44,7 +50,56 @@ type SizeT = {#type size_t#}
 data CChannel
 {#pointer *channel as Channel foreign -> CChannel#}
 
-{#pointer *channel_args as ^  newtype#}
+data ChannelArgs = ChannelArgs { unChannelArgs :: Map.HashMap B.ByteString ArgValue }
+
+toList :: ChannelArgs -> [(B.ByteString, ArgValue)]
+toList = Map.toList . unChannelArgs
+
+instance Monoid ChannelArgs where
+  mempty = ChannelArgs mempty
+  mappend (ChannelArgs a) (ChannelArgs b) = ChannelArgs (Map.union b a)
+
+data CChannelArgs
+{#pointer *channel_args as GrpcChannelArgs -> CChannelArgs#}
+
+type ArgInt = CInt
+
+data ArgValue
+  = ArgI ArgInt
+  | ArgS B.ByteString deriving Show
+
+data CArg
+{#pointer *arg as GrpcArg -> CArg#}
+
+{#enum arg_type as GrpcArgType {underscoreToCase}#}
+
+withChannelArgs :: ChannelArgs -> (GrpcChannelArgs -> IO a) -> IO a
+withChannelArgs (toList -> []) act = act nullPtr
+withChannelArgs (toList -> args) act =
+  allocaBytes {#sizeof grpc_channel_args#} $ \root -> do
+    {#set grpc_channel_args->num_args#} root (genericLength args)
+    allocaBytes ({#sizeof grpc_arg#} * length args) $ \arr -> do
+      {#set grpc_channel_args->args#} root arr
+      let
+        write [] _ = act root
+        write ((key, value):xs) elemPtr = do
+          print (key, value)
+          let
+            cont = write xs (elemPtr `plusPtr` {#sizeof grpc_arg#})
+          B.useAsCString key $ \keyPtr -> do
+            {#set grpc_arg->key#} elemPtr keyPtr
+            case value of
+              ArgI i -> do
+                {#set grpc_arg->type#} elemPtr (fromIntegral (fromEnum ArgInteger))
+                {#set grpc_arg->value.integer#} elemPtr i
+                cont
+              ArgS s -> do
+                {#set grpc_arg->type#} elemPtr (fromIntegral (fromEnum ArgString))
+                B.useAsCString s $ \valuePtr -> do
+                  {#set grpc_arg->value.string#} elemPtr valuePtr
+                  cont
+      write args arr
+
 data CCompletionQueue
 {#pointer *completion_queue as CompletionQueue -> CCompletionQueue#}
 

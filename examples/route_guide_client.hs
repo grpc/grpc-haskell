@@ -38,7 +38,6 @@ import           Control.Monad.IO.Class
 
 import           Data.Time.Clock
 import           Data.Word
-import           Foreign.Ptr
 import           Numeric
 import           System.Mem
 
@@ -51,7 +50,6 @@ import           Network.Grpc.Lib.TimeSpec
 import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.Version
 import           Network.Grpc.Lib.Grpc
-import           Network.Grpc.Lib.Types
 
 
 getFeatureMethodName :: B.ByteString
@@ -86,7 +84,7 @@ main :: IO ()
 main = do
   grpcInit
   BC8.putStrLn version
-  channel <- grpcInsecureChannelCreate "localhost:10000" (ChannelArgs nullPtr) reservedPtr
+  channel <- createInsecureChannel "localhost:10000" mempty
   deadline <- secondsFromNow 1
   ctx <- fmap (withTimeout deadline) (newClientContext channel)
   putStrLn "==================== getFeature1"

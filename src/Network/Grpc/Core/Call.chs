@@ -72,9 +72,6 @@ data ClientContext = ClientContext
   , ccDeadline :: Deadline
   }
 
-emptyChannelArgs :: ChannelArgs
-emptyChannelArgs = ChannelArgs C.nullPtr
-
 newClientContext :: Channel -> IO ClientContext
 newClientContext chan = do
   cq <- completionQueueCreate reservedPtr

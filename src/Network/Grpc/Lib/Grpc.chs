@@ -32,6 +32,8 @@ import Foreign.Ptr (Ptr, nullPtr, castPtr, plusPtr)
 import Foreign.C.Types
 import Foreign.Marshal.Utils
 
+import qualified Data.ByteString as B
+
 {#import Network.Grpc.Lib.Types#}
 {#import Network.Grpc.Lib.TimeSpec#}
 
@@ -45,8 +47,12 @@ import Foreign.Marshal.Utils
 
 {#fun unsafe grpc_insecure_channel_create as ^
   { useAsCString* `ByteString',
-    `ChannelArgs',
+    withChannelArgs* `ChannelArgs',
     id `Ptr ()' } -> `Channel'#}
+
+createInsecureChannel :: B.ByteString -> ChannelArgs -> IO Channel
+createInsecureChannel hostPort args =
+    grpcInsecureChannelCreate hostPort args nullPtr
 
 {#fun unsafe grpc_channel_destroy as ^
   { `Channel' } -> `()'#}

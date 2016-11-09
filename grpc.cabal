@@ -21,6 +21,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:
+    Network.Grpc.Lib.ChannelArgs
     -- .chs modules MUST be sorted in topological order, since c2hs will
     -- preproccess them in the order they're listed here.
     Network.Grpc.Lib.Version
@@ -31,8 +32,10 @@ library
     Network.Grpc.Lib.Grpc
     Network.Grpc.Core.Call
     Network.Grpc.CompletionQueue
-  -- other-modules:       
-  -- other-extensions:    
+
+  other-modules:
+    Network.Grpc.Lib.ChannelArgsStrings
+
   build-depends:       base >=4.6 && <4.10, bytestring, async, unordered-containers, transformers >= 0.4.1.0
   hs-source-dirs:      src
   default-language:    Haskell2010

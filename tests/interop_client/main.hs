@@ -208,7 +208,7 @@ hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
 -- to ensure that the proto serialized to zero bytes.
 runEmptyUnaryTest :: Options -> IO (Either String ())
 runEmptyUnaryTest opts =
-  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx "/grpc.testing.TestService/EmptyCall" [] B.empty
@@ -243,7 +243,7 @@ runLargeUnaryTest opts = do
                     _Payload'body = B.replicate 271828 0
                   }
                 }
-  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" [] (encodeMessage req)
@@ -330,7 +330,7 @@ runCustomMetadataTest opts = do
                   , _SimpleRequest'payload = Just def {
                       _Payload'body = B.replicate 271828 0 }
                   }
-      bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
         deadline <- secondsFromNow 1
         bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
           resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" metadata (encodeMessage req)
@@ -346,7 +346,7 @@ runCustomMetadataTest opts = do
         req = def { _StreamingOutputCallRequest'responseParameters = [ def { _ResponseParameters'size = 314159 } ]
                   , _StreamingOutputCallRequest'payload = Just def { _Payload'body = B.replicate 271828 0 }
                   }
-      bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
         deadline <- secondsFromNow 1
         bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
           client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" metadata
@@ -375,7 +375,7 @@ runCustomMetadataTest opts = do
 --  - received status message is empty or null/unset
 runUnimplementedMethodTest :: Options -> IO (Either String ())
 runUnimplementedMethodTest opts =
-  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx "/grpc.testing.UnimplementedService/UnimplementedCall" [] B.empty
@@ -395,7 +395,7 @@ runUnimplementedMethodTest opts =
 --  - exactly zero responses
 runEmptyStreamTest :: Options -> IO (Either String ())
 runEmptyStreamTest opts =
-  bracket (grpcInsecureChannelCreate (hostPort opts) emptyChannelArgs reservedPtr) grpcChannelDestroy $ \channel -> do
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
     deadline <- secondsFromNow 1
     bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
       client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" []
