@@ -43,7 +43,6 @@ import qualified Data.ByteString.Lazy                  as L
 import           Network.Grpc.Core.Call
 import           Network.Grpc.Lib.Grpc
 import           Network.Grpc.Lib.Metadata
-import           Network.Grpc.Lib.TimeSpec
 import           Network.Grpc.Lib.Types
 
 import           Data.Default.Class                    (def)
@@ -149,6 +148,9 @@ testOptions flags =
     (opts, [], []) -> Right (foldl (flip id) defaultOptions opts)
     (_, unkn, err) -> Left (map ("unrecognized argument " ++) unkn ++ err)
 
+callOptions :: CallOptions
+callOptions = withRelativeDeadlineSeconds 2
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -208,10 +210,9 @@ hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
 -- to ensure that the proto serialized to zero bytes.
 runEmptyUnaryTest :: Options -> IO (Either String ())
 runEmptyUnaryTest opts =
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
-    deadline <- secondsFromNow 1
-    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx "/grpc.testing.TestService/EmptyCall" [] B.empty
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      resp <- callUnary ctx callOptions "/grpc.testing.TestService/EmptyCall" [] B.empty
       case resp of
         RpcOk (UnaryResult _ _ msg)
           | L.null msg -> return (Right ())
@@ -243,10 +244,9 @@ runLargeUnaryTest opts = do
                     _Payload'body = B.replicate 271828 0
                   }
                 }
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
-    deadline <- secondsFromNow 1
-    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" [] (encodeMessage req)
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" [] (encodeMessage req)
       case resp of
         RpcOk (UnaryResult _ _ resp') ->
           case decodeMessage (L.toStrict resp') of
@@ -330,10 +330,9 @@ runCustomMetadataTest opts = do
                   , _SimpleRequest'payload = Just def {
                       _Payload'body = B.replicate 271828 0 }
                   }
-      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
-        deadline <- secondsFromNow 1
-        bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-          resp <- callUnary ctx "/grpc.testing.TestService/UnaryCall" metadata (encodeMessage req)
+      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+        bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+          resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" metadata (encodeMessage req)
           case resp of
             RpcOk (UnaryResult initMd trailMd _) ->
               checkMetadata initMd trailMd
@@ -346,10 +345,9 @@ runCustomMetadataTest opts = do
         req = def { _StreamingOutputCallRequest'responseParameters = [ def { _ResponseParameters'size = 314159 } ]
                   , _StreamingOutputCallRequest'payload = Just def { _Payload'body = B.replicate 271828 0 }
                   }
-      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
-        deadline <- secondsFromNow 1
-        bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-          client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" metadata
+      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+        bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+          client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall" metadata
           mds <- withNewClient client $ do
             sendMessage (encodeMessage req)
             sendHalfClose
@@ -375,10 +373,9 @@ runCustomMetadataTest opts = do
 --  - received status message is empty or null/unset
 runUnimplementedMethodTest :: Options -> IO (Either String ())
 runUnimplementedMethodTest opts =
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
-    deadline <- secondsFromNow 1
-    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx "/grpc.testing.UnimplementedService/UnimplementedCall" [] B.empty
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      resp <- callUnary ctx callOptions "/grpc.testing.UnimplementedService/UnimplementedCall" [] B.empty
       case resp of
         RpcError (StatusError StatusUnimplemented "") -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
@@ -395,10 +392,9 @@ runUnimplementedMethodTest opts =
 --  - exactly zero responses
 runEmptyStreamTest :: Options -> IO (Either String ())
 runEmptyStreamTest opts =
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel -> do
-    deadline <- secondsFromNow 1
-    bracket (fmap (withTimeout deadline) (newClientContext channel)) destroyClientContext $ \ctx -> do
-      client <- callBidi ctx "/grpc.testing.TestService/FullDuplexCall" []
+  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall" []
       resp <- withNewClient client $ do
         sendHalfClose
         msgs <- receiveAllMessages

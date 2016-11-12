@@ -46,7 +46,6 @@ import qualified Data.ByteString.Char8        as BC8
 import qualified Data.ByteString.Lazy         as L
 
 import           Network.Grpc.Core.Call
-import           Network.Grpc.Lib.TimeSpec
 import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.Version
 import           Network.Grpc.Lib.Grpc
@@ -72,8 +71,6 @@ main' :: IO ()
 main' = do
   BC8.putStrLn version
   channel <- createInsecureChannel "localhost:10000" mempty
-  deadline <- secondsFromNow 1
-  ctx <- fmap (withTimeout deadline) (newClientContext channel)
 
   let routeGuideClient = createRouteGuideClient channel
 
@@ -133,8 +130,6 @@ main' = do
 
   putStrLn "*** Destroying channel"
   grpcChannelDestroy channel
-  putStrLn "*** Shutting down client context"
-  destroyClientContext ctx
 
 -- ----------------------------------------------
 -- Example data
@@ -195,11 +190,11 @@ type RouteSummary = L.ByteString
 
 data RouteGuideClient = RouteGuideClient {
   _channel      :: Channel,
-  _callOptions  :: (),
-  _getFeature   :: ClientContext -> [Metadata] -> Point -> IO (RpcReply (UnaryResult L.ByteString)),
-  _listFeatures :: ClientContext -> [Metadata] -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString)),
-  _recordRoute  :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString RouteSummary)),
-  _routeChat    :: ClientContext -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
+  _callOptions  :: CallOptions,
+  _getFeature   :: ClientContext -> CallOptions -> [Metadata] -> Point -> IO (RpcReply (UnaryResult L.ByteString)),
+  _listFeatures :: ClientContext -> CallOptions -> [Metadata] -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString)),
+  _recordRoute  :: ClientContext -> CallOptions -> [Metadata] -> IO (RpcReply (Client B.ByteString RouteSummary)),
+  _routeChat    :: ClientContext -> CallOptions -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 }
 
 getFeature :: RouteGuideClient -> Point -> IO (RpcReply (UnaryResult L.ByteString))
@@ -207,39 +202,39 @@ getFeature client arg =
   bracket
     (newClientContext (_channel client))
     destroyClientContext
-    (\ctx -> _getFeature client ctx [] arg)
+    (\ctx -> _getFeature client ctx (_callOptions client) [] arg)
 
 listFeatures :: RouteGuideClient -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString))
 listFeatures client arg =
   bracket
     (newClientContext (_channel client))
     destroyClientContext
-    (\ctx -> _listFeatures client ctx [] arg)
+    (\ctx -> _listFeatures client ctx (_callOptions client) [] arg)
 
 recordRoute :: RouteGuideClient -> IO (RpcReply (Client B.ByteString RouteSummary))
 recordRoute client =
   bracket
     (newClientContext (_channel client))
     destroyClientContext
-    (\ctx -> _recordRoute client ctx [])
+    (\ctx -> _recordRoute client ctx (_callOptions client) [])
 
 routeChat :: RouteGuideClient -> IO (RpcReply (Client B.ByteString L.ByteString))
 routeChat client =
   bracket
     (newClientContext (_channel client))
     destroyClientContext
-    (\ctx -> _routeChat client ctx [])
+    (\ctx -> _routeChat client ctx (_callOptions client) [])
 
 createRouteGuideClient :: Channel -> RouteGuideClient
 createRouteGuideClient chan = RouteGuideClient {
   _channel = chan,
-  _callOptions = (),
-  _getFeature = \ctx md arg ->
-    callUnary ctx getFeatureMethodName md (fromPoint arg),
-  _listFeatures = \ctx md arg ->
-    callDownstream ctx listFeaturesMethodName md (fromRectangle arg),
-  _recordRoute = \ctx md ->
-    callUpstream ctx recordRouteMethodName md,
-  _routeChat = \ctx md ->
-    callBidi ctx routeChatMethodName md
+  _callOptions = mempty,
+  _getFeature = \ctx co md arg ->
+    callUnary ctx co getFeatureMethodName md (fromPoint arg),
+  _listFeatures = \ctx co md arg ->
+    callDownstream ctx co listFeaturesMethodName md (fromRectangle arg),
+  _recordRoute = \ctx co md ->
+    callUpstream ctx co recordRouteMethodName md,
+  _routeChat = \ctx co md ->
+    callBidi ctx co routeChatMethodName md
 }

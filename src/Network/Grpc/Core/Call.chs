@@ -34,6 +34,7 @@ import           Control.Monad
 
 import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as L
+import           Data.Monoid ((<>), Last(..))
 import           Data.IORef
 
 import           Foreign.C.Types              as C
@@ -64,28 +65,67 @@ import Network.Grpc.Lib.PropagationBits
 
 {#context lib = "grpc" prefix = "grpc" #}
 
-type Deadline = TimeSpec
+data Deadline
+  = AbsoluteDeadline TimeSpec
+  | RelativeDeadline Int --seconds
 
 data ClientContext = ClientContext
   { ccChannel :: Channel
   , ccCQ :: CompletionQueue
   , ccWorker :: CQ.Worker
-  , ccDeadline :: Deadline
   }
+
+data CallOptions = CallOptions
+  { coDeadline :: Maybe Deadline
+  , coParentContext :: Maybe () -- todo
+  , coPropagationMask :: Maybe PropagationMask
+  , coMetadata :: [Metadata] -- todo
+  }
+
+instance Monoid CallOptions where
+  mempty = CallOptions Nothing Nothing Nothing []
+  mappend (CallOptions a b c d) (CallOptions a' b' c' d') =
+    CallOptions
+      (getLast (Last a <> Last a'))
+      (getLast (Last b <> Last b'))
+      (getLast (Last c <> Last c'))
+      (d <> d')
+
+withAbsoluteDeadline :: TimeSpec -> CallOptions
+withAbsoluteDeadline deadline =
+  mempty { coDeadline = Just (AbsoluteDeadline deadline) }
+
+withRelativeDeadlineSeconds :: Int -> CallOptions
+withRelativeDeadlineSeconds seconds =
+  mempty { coDeadline = Just (RelativeDeadline seconds) }
+
+withParentContext :: () -> CallOptions
+withParentContext ctx =
+  mempty { coParentContext = Just ctx }
+
+withParentContextPropagating :: () -> PropagationMask -> CallOptions
+withParentContextPropagating ctx prop =
+  mempty { coParentContext   = Just ctx
+         , coPropagationMask = Just prop }
+
+resolveDeadline :: CallOptions -> IO TimeSpec
+resolveDeadline co =
+  case coDeadline co of
+    Nothing -> return gprInfFuture
+    Just (AbsoluteDeadline deadline) -> return deadline
+    Just (RelativeDeadline seconds) ->
+      secondsFromNow (fromIntegral seconds)
 
 newClientContext :: Channel -> IO ClientContext
 newClientContext chan = do
   cq <- completionQueueCreate reservedPtr
   cqt <- CQ.startCompletionQueueThread cq
-  return (ClientContext chan cq cqt gprInfFuture)
+  return (ClientContext chan cq cqt)
 
 destroyClientContext :: ClientContext -> IO ()
-destroyClientContext (ClientContext _ cq w _) = do
+destroyClientContext (ClientContext _ cq w) = do
   completionQueueShutdown cq
   CQ.waitWorkerTermination w
-
-withTimeout :: Deadline -> ClientContext -> ClientContext
-withTimeout ts (ClientContext chan cq cqt _) = ClientContext chan cq cqt ts
 
 type MethodName = B.ByteString
 type Arg = B.ByteString
@@ -104,8 +144,9 @@ reservedPtr = C.nullPtr
 
 data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 
-callUnary :: ClientContext -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
-callUnary ctx@(ClientContext chan cq _ deadline) method md arg =
+callUnary :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
+callUnary ctx@(ClientContext chan cq _) co method md arg = do
+  deadline <- resolveDeadline co
   C.withForeignPtr chan $ \chanPtr ->
     bracket (grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
       crw <- newClientReaderWriter ctx mcall
@@ -137,8 +178,9 @@ callUnary ctx@(ClientContext chan cq _ deadline) method md arg =
             _ -> return (RpcError (StatusError status statusDetails))
         RpcError err -> return (RpcError err)
 
-callDownstream :: ClientContext -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
-callDownstream ctx@(ClientContext chan cq _ deadline) method md arg =
+callDownstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
+callDownstream ctx@(ClientContext chan cq _) co method md arg = do
+  deadline <- resolveDeadline co
   C.withForeignPtr chan $ \chanPtr -> do
     mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
     crw <- newClientReaderWriter ctx mcall
@@ -157,8 +199,9 @@ callDownstream ctx@(ClientContext chan cq _ deadline) method md arg =
         return (RpcOk (Client crw defaultEncoder defaultDecoder))
       RpcError err -> return (RpcError err)
 
-callUpstream :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
-callUpstream ctx@(ClientContext chan cq _ deadline) method md =
+callUpstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
+callUpstream ctx@(ClientContext chan cq _) co method md = do
+  deadline <- resolveDeadline co
   C.withForeignPtr chan $ \chanPtr -> do
     mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
     crw <- newClientReaderWriter ctx mcall
@@ -171,8 +214,9 @@ callUpstream ctx@(ClientContext chan cq _ deadline) method md =
         return (RpcOk (Client crw defaultEncoder defaultDecoder))
       RpcError err -> return (RpcError err)
 
-callBidi :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
-callBidi ctx@(ClientContext chan cq _ deadline) method md = do
+callBidi :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
+callBidi ctx@(ClientContext chan cq _) co method md = do
+  deadline <- resolveDeadline co
   C.withForeignPtr chan $ \chanPtr -> do
     mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
 
