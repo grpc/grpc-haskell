@@ -46,6 +46,7 @@ import qualified Data.ByteString.Lazy      as L
 
 import           Network.Grpc.Core.Call
 import           Network.Grpc.Lib.Core
+import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.Version
 
 
@@ -69,19 +70,20 @@ main' = do
   BC8.putStrLn version
   channel <- createInsecureChannel "localhost:10000" mempty
 
-  let routeGuideClient = createRouteGuideClient channel
+  let client = createRouteGuideClient channel
 
   measure "getFeature 1" $ do
-    res <- getFeature routeGuideClient (Point 2 2)
+    res <- getFeature client (Point 2 2)
     print res
 
   measure "getFeature 2" $ do
-    res <- getFeature routeGuideClient (Point 42 42)
+    let client' = client `withCallOptions` withMetadata [Metadata "my-key" "my-value" 0]
+    res <- getFeature client' (Point 42 42)
     print res
 
   measure "listFeatures" $ do
     let rect = Rectangle (Point 0 0) (Point 16 16)
-    reader <- listFeatures routeGuideClient rect
+    reader <- listFeatures client rect
     features' <- withNewClient reader $ do
       let
         readAll acc = do
@@ -98,7 +100,7 @@ main' = do
     print features'
 
   measure "recordRoute" $ do
-    record <- recordRoute routeGuideClient
+    record <- recordRoute client
     rt <- withNewClient record $ do
       forM_ [ Point x x | x <- [0..20] ] $ \p ->
         sendMessage (fromPoint p)
@@ -111,7 +113,7 @@ main' = do
     print rt
 
   measure "async routeChat" $ do
-    RpcOk route <- routeChat routeGuideClient
+    RpcOk route <- routeChat client
     block <- newEmptyMVar
     _ <- forkIO $ do -- the go example does this in a concurrent thread
           --initMetadata <- getInitialMetadata recvInitMetadata
@@ -193,6 +195,9 @@ data RouteGuideClient = RouteGuideClient {
   _recordRoute  :: ClientContext -> CallOptions -> IO (RpcReply (Client B.ByteString RouteSummary)),
   _routeChat    :: ClientContext -> CallOptions -> IO (RpcReply (Client B.ByteString L.ByteString))
 }
+
+withCallOptions :: RouteGuideClient -> CallOptions -> RouteGuideClient
+withCallOptions client co = client { _callOptions = co }
 
 getFeature :: RouteGuideClient -> Point -> IO (RpcReply (UnaryResult L.ByteString))
 getFeature client arg =
