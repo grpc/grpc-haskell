@@ -51,6 +51,7 @@ import           Control.Monad.Trans.Except
 import           Control.Monad.Trans.Reader
 
 import qualified Network.Grpc.CompletionQueue as CQ
+import Network.Grpc.Lib.PropagationBits
 {#import Network.Grpc.Lib.ByteBuffer#}
 {#import Network.Grpc.Lib.Metadata#}
 {#import Network.Grpc.Lib.TimeSpec#}
@@ -106,7 +107,7 @@ data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 callUnary :: ClientContext -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
 callUnary ctx@(ClientContext chan cq _ deadline) method md arg =
   C.withForeignPtr chan $ \chanPtr ->
-    bracket (grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
+    bracket (grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
       crw <- newClientReaderWriter ctx mcall
 
       sendInitOp <- opSendInitialMetadata md
@@ -139,7 +140,7 @@ callUnary ctx@(ClientContext chan cq _ deadline) method md arg =
 callDownstream :: ClientContext -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
 callDownstream ctx@(ClientContext chan cq _ deadline) method md arg =
   C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline >>= newMVar
+    mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
     crw <- newClientReaderWriter ctx mcall
 
     sendInitOp <- opSendInitialMetadata md
@@ -159,7 +160,7 @@ callDownstream ctx@(ClientContext chan cq _ deadline) method md arg =
 callUpstream :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 callUpstream ctx@(ClientContext chan cq _ deadline) method md =
   C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline >>= newMVar
+    mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
     crw <- newClientReaderWriter ctx mcall
 
     sendInitOp <- opSendInitialMetadata md
@@ -173,7 +174,7 @@ callUpstream ctx@(ClientContext chan cq _ deadline) method md =
 callBidi :: ClientContext -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 callBidi ctx@(ClientContext chan cq _ deadline) method md = do
   C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr defaultPropagationMask cq method "localhost" deadline >>= newMVar
+    mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
 
     crw <- newClientReaderWriter ctx mcall
     sendInitOp <- opSendInitialMetadata md

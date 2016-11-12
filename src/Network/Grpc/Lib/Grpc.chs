@@ -34,6 +34,7 @@ import Foreign.Marshal.Utils
 
 import qualified Data.ByteString as B
 
+import Network.Grpc.Lib.PropagationBits
 {#import Network.Grpc.Lib.Types#}
 {#import Network.Grpc.Lib.TimeSpec#}
 
@@ -60,7 +61,7 @@ createInsecureChannel hostPort args =
 {#fun unsafe hs_grpc_channel_create_call as grpcChannelCreateCall
   { id `Ptr CChannel',
     id `Ptr CCall',
-    id `PropagationMask',
+    fromIntegral `PropagationMask',
     `CompletionQueue',
     useAsCString* `ByteString',
     useAsCString* `ByteString',

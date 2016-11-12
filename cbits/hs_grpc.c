@@ -59,7 +59,3 @@ grpc_call *hs_grpc_channel_create_call(grpc_channel *channel,
                                        gpr_timespec *deadline) {
     return grpc_channel_create_call(channel, parent_call, propagation_mask, cq, method, host, *deadline, NULL /* reserved */);
 }
-
-uint32_t hs_grpc_default_propagation_mask() {
-  return GRPC_PROPAGATE_DEFAULTS;
-}

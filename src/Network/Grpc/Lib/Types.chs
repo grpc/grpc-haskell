@@ -156,11 +156,6 @@ data OpStatus
 data GrpcOp
 {#pointer *grpc_op as GrpcOpPtr -> GrpcOp #}
 
-type PropagationMask = {#type uint32_t#}
-
-{#fun pure unsafe hs_grpc_default_propagation_mask as defaultPropagationMask
-  {} -> `PropagationMask' id #}
-
 {#fun unsafe completion_queue_create as ^
   { `Ptr ()' } -> `CompletionQueue'#}
 

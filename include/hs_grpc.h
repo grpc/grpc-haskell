@@ -53,6 +53,4 @@ grpc_call *hs_grpc_channel_create_call(grpc_channel *channel,
                                        const char *method, const char *host,
                                        gpr_timespec *deadline);
 
-uint32_t hs_grpc_default_propagation_mask();
-
 #endif  /* HS_HS_GRPC_H */

@@ -31,22 +31,25 @@ import Data.Word(Word32)
 
 #include "grpc/grpc.h"
 
-propagateDefaults :: (#type uint32_t)
+type PropagationBit = (#type uint32_t)
+type PropagationMask = (#type uint32_t)
+
+propagateDefaults :: PropagationMask
 propagateDefaults = (#const GRPC_PROPAGATE_DEFAULTS)
 
 -- | Propagate deadline.
-propagateDeadline :: (#type uint32_t)
+propagateDeadline :: PropagationBit
 propagateDeadline = (#const GRPC_PROPAGATE_DEADLINE)
 
 -- | Propagate census context.
-propagateCensusStatsContext :: (#type uint32_t)
+propagateCensusStatsContext :: PropagationBit
 propagateCensusStatsContext = (#const GRPC_PROPAGATE_CENSUS_STATS_CONTEXT)
 
 -- | Propagate census context.
-propagateCensusTracingContext :: (#type uint32_t)
+propagateCensusTracingContext :: PropagationBit
 propagateCensusTracingContext = (#const GRPC_PROPAGATE_CENSUS_TRACING_CONTEXT)
 
 -- | Propagate cancellation.
-propagateCancellation :: (#type uint32_t)
+propagateCancellation :: PropagationBit
 propagateCancellation = (#const GRPC_PROPAGATE_CANCELLATION)
 
