@@ -31,7 +31,6 @@
 module Main where
 
 import           Control.Concurrent
--- import           Control.Concurrent.Async
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -41,15 +40,14 @@ import           Data.Word
 import           Numeric
 import           System.Mem
 
-import qualified Data.ByteString              as B
-import qualified Data.ByteString.Char8        as BC8
-import qualified Data.ByteString.Lazy         as L
+import qualified Data.ByteString           as B
+import qualified Data.ByteString.Char8     as BC8
+import qualified Data.ByteString.Lazy      as L
 
 import           Network.Grpc.Core.Call
+import           Network.Grpc.Lib.Core
 import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.Version
-import           Network.Grpc.Lib.Grpc
-import           Network.Grpc.Lib.Types
 
 
 getFeatureMethodName :: B.ByteString
@@ -149,7 +147,7 @@ notes = map (B.pack . f)
     hex :: Char -> Char -> Word8
     hex x y = fst . head $ readHex [x,y]
     f (a:b:c) = hex a b : f c
-    f _ = []
+    f _       = []
 
 -- ----------------------------------------------
 -- Utils

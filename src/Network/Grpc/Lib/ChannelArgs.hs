@@ -54,7 +54,7 @@ import qualified Data.ByteString                     as B
 
 import qualified Data.HashMap.Strict                 as Map
 
-import           Network.Grpc.Lib.Types
+import           Network.Grpc.Lib.Core
 import           Network.Grpc.Lib.ChannelArgsStrings
 
 

@@ -25,19 +25,22 @@
 --
 --------------------------------------------------------------------------------
 {-# LANGUAGE ViewPatterns #-}
-module Network.Grpc.Lib.Types where
+
+module Network.Grpc.Lib.Core where
 
 import Data.List(genericLength)
 import Foreign.C.Types
 import Foreign.Marshal.Utils
 import Foreign.Marshal.Alloc
 import Foreign.Storable
-import Foreign.Ptr
+import Foreign.Ptr (Ptr, nullPtr, castPtr, plusPtr)
 
 import qualified Data.ByteString as B
+import Data.ByteString (ByteString, useAsCString)
 
 import qualified Data.HashMap.Strict as Map
 
+import Network.Grpc.Lib.PropagationBits
 {#import Network.Grpc.Lib.TimeSpec#}
 
 #include <grpc/grpc.h>
@@ -45,10 +48,17 @@ import qualified Data.HashMap.Strict as Map
 
 {#context lib = "grpc" prefix = "grpc"#}
 
+-- grpc_shutdown may block for a long time, should not be marked with unsafe
+{#fun unsafe grpc_init as ^ {} -> `()'#}
+
+{#fun grpc_shutdown as ^ {} -> `()'#}
+
+
 type SizeT = {#type size_t#}
 
-data CChannel
-{#pointer *channel as Channel foreign -> CChannel#}
+-- --------------------
+-- Channel Arguments
+-- --------------------
 
 data ChannelArgs = ChannelArgs { unChannelArgs :: Map.HashMap B.ByteString ArgValue }
 
@@ -100,15 +110,32 @@ withChannelArgs (toList -> args) act =
                   cont
       write args arr
 
+-- --------------------
+-- Channel
+-- --------------------
+
+data CChannel
+{#pointer *channel as Channel foreign -> CChannel#}
+
+{#fun unsafe grpc_insecure_channel_create as ^
+  { useAsCString* `ByteString',
+    withChannelArgs* `ChannelArgs',
+    id `Ptr ()' } -> `Channel'#}
+
+createInsecureChannel :: B.ByteString -> ChannelArgs -> IO Channel
+createInsecureChannel hostPort args =
+    grpcInsecureChannelCreate hostPort args nullPtr
+
+{#fun unsafe grpc_channel_destroy as ^
+  { `Channel' } -> `()'#}
+
+
+-- ---------------------------
+-- Completion Queue and events
+-- ---------------------------
+
 data CCompletionQueue
 {#pointer *completion_queue as CompletionQueue -> CCompletionQueue#}
-
-data CCall
-{#pointer *grpc_call as Call -> CCall#}
-
-{#enum completion_type as ^ {underscoreToCase} add prefix = "Enum" deriving (Show,Eq)#}
-{#enum status_code as ^ {underscoreToCase} deriving (Show,Eq)#}
-{#enum call_error as ^ {underscoreToCase} deriving (Eq, Show)#}
 
 data Event
   = QueueTimeOut
@@ -116,6 +143,30 @@ data Event
   | QueueOpComplete !OpStatus !Tag
     deriving Show
 {#pointer *grpc_event as EventPtr -> Event#}
+
+{#enum completion_type as ^ {underscoreToCase} add prefix = "Enum" deriving (Show,Eq)#}
+
+{#fun unsafe completion_queue_create as ^
+  { `Ptr ()' } -> `CompletionQueue'#}
+
+-- Must be marked with safe (not unsafe) as it may block.
+{#fun hs_grpc_completion_queue_next as grpcCompletionQueueNext
+  { `CompletionQueue',
+    with* `TimeSpec',
+    alloca- `Event' peek* } -> `()' #}
+
+-- Must be marked with safe (not unsafe) as it may block.
+{#fun hs_grpc_completion_queue_pluck as grpcCompletionQueuePluck
+  { `CompletionQueue',
+    `Ptr ()',
+    with* `TimeSpec',
+    alloca- `Event' peek* } -> `()' #}
+
+{#fun unsafe completion_queue_destroy as ^
+  {`CompletionQueue'} -> `()'#}
+
+{#fun unsafe completion_queue_shutdown as ^
+  {`CompletionQueue'} -> `()'#}
 
 instance Storable Event where
   sizeOf _ = {#sizeof grpc_event#}
@@ -156,27 +207,18 @@ data OpStatus
 data GrpcOp
 {#pointer *grpc_op as GrpcOpPtr -> GrpcOp #}
 
-{#fun unsafe completion_queue_create as ^
-  { `Ptr ()' } -> `CompletionQueue'#}
+mkTag :: Int -> Ptr ()
+mkTag n = castPtr (nullPtr `plusPtr` n)
 
--- Must be marked with safe (not unsafe) as it may block.
-{#fun hs_grpc_completion_queue_next as grpcCompletionQueueNext
-  { `CompletionQueue',
-    with* `TimeSpec',
-    alloca- `Event' peek* } -> `()' #}
+-- --------------------
+-- Call
+-- --------------------
 
--- Must be marked with safe (not unsafe) as it may block.
-{#fun hs_grpc_completion_queue_pluck as grpcCompletionQueuePluck
-  { `CompletionQueue',
-    `Ptr ()',
-    with* `TimeSpec',
-    alloca- `Event' peek* } -> `()' #}
+data CCall
+{#pointer *grpc_call as Call -> CCall#}
 
-{#fun unsafe completion_queue_destroy as ^
-  {`CompletionQueue'} -> `()'#}
-
-{#fun unsafe completion_queue_shutdown as ^
-  {`CompletionQueue'} -> `()'#}
+{#enum status_code as ^ {underscoreToCase} deriving (Show,Eq)#}
+{#enum call_error as ^ {underscoreToCase} deriving (Eq, Show)#}
 
 toStatusCode :: CInt -> StatusCode
 toStatusCode = toEnum . fromIntegral
@@ -189,3 +231,28 @@ toCallError = toEnum . fromIntegral
 
 fromCallError :: CallError -> CInt
 fromCallError = fromIntegral . fromEnum
+
+{#fun unsafe hs_grpc_channel_create_call as grpcChannelCreateCall
+  { `Channel',
+    id `Ptr CCall',
+    fromIntegral `PropagationMask',
+    `CompletionQueue',
+    useAsCString* `ByteString',
+    useAsCString* `ByteString',
+    with* `TimeSpec' } -> `Call' #}
+
+{#fun unsafe grpc_call_destroy as ^
+  {`Call'} -> `()'#}
+
+{#fun unsafe grpc_call_start_batch as ^
+  {`Call', `GrpcOpPtr', `CULong', `Ptr ()', `Ptr ()'} -> `CallError' toCallError#}
+
+{#fun unsafe grpc_call_cancel as ^
+  { `Call',
+    id `Ptr ()' } -> `CallError' #}
+
+{#fun unsafe grpc_call_cancel_with_status as ^
+  { `Call'
+  , `StatusCode'
+  , useAsCString* `ByteString'
+  , id `Ptr ()' } -> `CallError' #}

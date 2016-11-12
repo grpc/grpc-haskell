@@ -29,21 +29,20 @@ module Network.Grpc.CompletionQueue where
 
 import           Control.Concurrent
 import           Control.Exception
-import           Control.Monad                (when, unless)
+import           Control.Monad             (unless, when)
 
-import qualified Data.HashMap.Strict          as Map
+import qualified Data.HashMap.Strict       as Map
 
 import           Foreign.Ptr
 
+import           Network.Grpc.Lib.Core
 import           Network.Grpc.Lib.TimeSpec
-import           Network.Grpc.Lib.Grpc
-import           Network.Grpc.Lib.Types
 
 
 data Worker = Worker {
-  cqEventMap :: EventMap,
+  cqEventMap    :: EventMap,
   cqNextEventId :: MVar EventId,
-  cqFinished :: MVar ()
+  cqFinished    :: MVar ()
 }
 
 type EventId = Int

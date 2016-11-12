@@ -38,7 +38,6 @@ import           Data.Monoid ((<>), Last(..))
 import           Data.IORef
 
 import           Foreign.C.Types              as C
-import qualified Foreign.ForeignPtr           as C
 import qualified Foreign.Marshal.Alloc        as C
 import qualified Foreign.Marshal.Utils        as C
 import qualified Foreign.Ptr                  as C
@@ -56,8 +55,7 @@ import Network.Grpc.Lib.PropagationBits
 {#import Network.Grpc.Lib.ByteBuffer#}
 {#import Network.Grpc.Lib.Metadata#}
 {#import Network.Grpc.Lib.TimeSpec#}
-{#import Network.Grpc.Lib.Types#}
-{#import Network.Grpc.Lib.Grpc#}
+{#import Network.Grpc.Lib.Core#}
 
 
 #include <grpc/grpc.h>
@@ -147,86 +145,82 @@ data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 callUnary :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
 callUnary ctx@(ClientContext chan cq _) co method md arg = do
   deadline <- resolveDeadline co
-  C.withForeignPtr chan $ \chanPtr ->
-    bracket (grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
-      crw <- newClientReaderWriter ctx mcall
-
-      sendInitOp <- opSendInitialMetadata md
-      sendCloseOp <- opSendCloseFromClient
-      sendMessageOp <- opSendMessage arg
-      recvStatusOp <- opRecvStatusOnClient crw
-      recvMessageOp <- opRecvMessage
-      recvInitialMetadataOp <- opRecvInitialMetadata crw
-
-      res <- callBatch crw [
-            OpX sendInitOp
-          , OpX sendCloseOp
-          , OpX recvInitialMetadataOp
-          , OpX recvMessageOp
-          , OpX sendMessageOp
-          , OpX recvStatusOp
-          ]
-      case res of
-        RpcOk _ -> do
-          (RpcStatus trailMD status statusDetails) <- opRead recvStatusOp
-          case status of
-            StatusOk -> do
-              initMD <- opRead recvInitialMetadataOp
-              answ <- opRead recvMessageOp
-              let answ' = maybe L.empty id answ
-              return (RpcOk (UnaryResult initMD trailMD answ'))
-            _ -> return (RpcError (StatusError status statusDetails))
-        RpcError err -> return (RpcError err)
-
-callDownstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
-callDownstream ctx@(ClientContext chan cq _) co method md arg = do
-  deadline <- resolveDeadline co
-  C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  bracket (grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
     crw <- newClientReaderWriter ctx mcall
 
     sendInitOp <- opSendInitialMetadata md
     sendCloseOp <- opSendCloseFromClient
     sendMessageOp <- opSendMessage arg
+    recvStatusOp <- opRecvStatusOnClient crw
+    recvMessageOp <- opRecvMessage
+    recvInitialMetadataOp <- opRecvInitialMetadata crw
 
     res <- callBatch crw [
           OpX sendInitOp
         , OpX sendCloseOp
+        , OpX recvInitialMetadataOp
+        , OpX recvMessageOp
         , OpX sendMessageOp
+        , OpX recvStatusOp
         ]
     case res of
       RpcOk _ -> do
-        return (RpcOk (Client crw defaultEncoder defaultDecoder))
+        (RpcStatus trailMD status statusDetails) <- opRead recvStatusOp
+        case status of
+          StatusOk -> do
+            initMD <- opRead recvInitialMetadataOp
+            answ <- opRead recvMessageOp
+            let answ' = maybe L.empty id answ
+            return (RpcOk (UnaryResult initMD trailMD answ'))
+          _ -> return (RpcError (StatusError status statusDetails))
       RpcError err -> return (RpcError err)
+
+callDownstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
+callDownstream ctx@(ClientContext chan cq _) co method md arg = do
+  deadline <- resolveDeadline co
+  mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  crw <- newClientReaderWriter ctx mcall
+
+  sendInitOp <- opSendInitialMetadata md
+  sendCloseOp <- opSendCloseFromClient
+  sendMessageOp <- opSendMessage arg
+
+  res <- callBatch crw [
+        OpX sendInitOp
+      , OpX sendCloseOp
+      , OpX sendMessageOp
+      ]
+  case res of
+    RpcOk _ -> do
+      return (RpcOk (Client crw defaultEncoder defaultDecoder))
+    RpcError err -> return (RpcError err)
 
 callUpstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 callUpstream ctx@(ClientContext chan cq _) co method md = do
   deadline <- resolveDeadline co
-  C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
-    crw <- newClientReaderWriter ctx mcall
+  mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  crw <- newClientReaderWriter ctx mcall
 
-    sendInitOp <- opSendInitialMetadata md
+  sendInitOp <- opSendInitialMetadata md
 
-    res <- callBatch crw [ OpX sendInitOp ]
-    case res of
-      RpcOk _ -> do
-        return (RpcOk (Client crw defaultEncoder defaultDecoder))
-      RpcError err -> return (RpcError err)
+  res <- callBatch crw [ OpX sendInitOp ]
+  case res of
+    RpcOk _ -> do
+      return (RpcOk (Client crw defaultEncoder defaultDecoder))
+    RpcError err -> return (RpcError err)
 
 callBidi :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
 callBidi ctx@(ClientContext chan cq _) co method md = do
   deadline <- resolveDeadline co
-  C.withForeignPtr chan $ \chanPtr -> do
-    mcall <- grpcChannelCreateCall chanPtr C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
 
-    crw <- newClientReaderWriter ctx mcall
-    sendInitOp <- opSendInitialMetadata md
+  crw <- newClientReaderWriter ctx mcall
+  sendInitOp <- opSendInitialMetadata md
 
-    res <- callBatch crw [ OpX sendInitOp ]
-    case res of
-      RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
-      RpcError err -> return (RpcError err)
+  res <- callBatch crw [ OpX sendInitOp ]
+  case res of
+    RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
+    RpcError err -> return (RpcError err)
 
 data Client req resp = Client
   { clientCrw :: ClientReaderWriter

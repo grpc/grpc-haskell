@@ -28,8 +28,7 @@ library
     Network.Grpc.Lib.ByteBuffer
     Network.Grpc.Lib.TimeSpec
     Network.Grpc.Lib.Metadata
-    Network.Grpc.Lib.Types
-    Network.Grpc.Lib.Grpc
+    Network.Grpc.Lib.Core
     Network.Grpc.Core.Call
     Network.Grpc.CompletionQueue
 

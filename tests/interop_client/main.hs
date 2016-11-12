@@ -41,9 +41,8 @@ import qualified Data.ByteString.Char8                 as C8
 import qualified Data.ByteString.Lazy                  as L
 
 import           Network.Grpc.Core.Call
-import           Network.Grpc.Lib.Grpc
+import           Network.Grpc.Lib.Core
 import           Network.Grpc.Lib.Metadata
-import           Network.Grpc.Lib.Types
 
 import           Data.Default.Class                    (def)
 import           Data.ProtoLens                        (decodeMessage,
