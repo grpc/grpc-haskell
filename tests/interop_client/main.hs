@@ -31,6 +31,7 @@ module Main where
 
 import           Control.Exception
 import           Control.Monad
+import           Data.Monoid                           ((<>))
 import           System.Console.GetOpt
 import           System.Environment
 import           System.Exit
@@ -211,7 +212,7 @@ runEmptyUnaryTest :: Options -> IO (Either String ())
 runEmptyUnaryTest opts =
   bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx callOptions "/grpc.testing.TestService/EmptyCall" [] B.empty
+      resp <- callUnary ctx callOptions "/grpc.testing.TestService/EmptyCall" B.empty
       case resp of
         RpcOk (UnaryResult _ _ msg)
           | L.null msg -> return (Right ())
@@ -245,7 +246,7 @@ runLargeUnaryTest opts = do
                 }
   bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" [] (encodeMessage req)
+      resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
       case resp of
         RpcOk (UnaryResult _ _ resp') ->
           case decodeMessage (L.toStrict resp') of
@@ -315,6 +316,7 @@ runCustomMetadataTest opts = do
     expectedInitMd = Metadata "x-grpc-test-echo-initial" "test_initial_metadata_value" 0
     expectedTrailMd = Metadata "x-grpc-test-echo-trailing-bin" "\x0a\x0b\x0a\x0b\x0a\x0b" 0
     metadata = [ expectedInitMd, expectedTrailMd ]
+    callOptions' = callOptions <> withMetadata metadata
 
     checkMetadata :: [Metadata] -> [Metadata] -> IO (Either String ())
     checkMetadata initMd trailMd
@@ -331,7 +333,7 @@ runCustomMetadataTest opts = do
                   }
       bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
         bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-          resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" metadata (encodeMessage req)
+          resp <- callUnary ctx callOptions' "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
           case resp of
             RpcOk (UnaryResult initMd trailMd _) ->
               checkMetadata initMd trailMd
@@ -346,7 +348,7 @@ runCustomMetadataTest opts = do
                   }
       bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
         bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-          client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall" metadata
+          client <- callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall"
           mds <- withNewClient client $ do
             sendMessage (encodeMessage req)
             sendHalfClose
@@ -374,7 +376,7 @@ runUnimplementedMethodTest :: Options -> IO (Either String ())
 runUnimplementedMethodTest opts =
   bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      resp <- callUnary ctx callOptions "/grpc.testing.UnimplementedService/UnimplementedCall" [] B.empty
+      resp <- callUnary ctx callOptions "/grpc.testing.UnimplementedService/UnimplementedCall" B.empty
       case resp of
         RpcError (StatusError StatusUnimplemented "") -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
@@ -393,7 +395,7 @@ runEmptyStreamTest :: Options -> IO (Either String ())
 runEmptyStreamTest opts =
   bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall" []
+      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
       resp <- withNewClient client $ do
         sendHalfClose
         msgs <- receiveAllMessages

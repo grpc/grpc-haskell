@@ -106,6 +106,10 @@ withParentContextPropagating ctx prop =
   mempty { coParentContext   = Just ctx
          , coPropagationMask = Just prop }
 
+withMetadata :: [Metadata] -> CallOptions
+withMetadata md =
+  mempty { coMetadata = md }
+
 resolveDeadline :: CallOptions -> IO TimeSpec
 resolveDeadline co =
   case coDeadline co of
@@ -142,13 +146,13 @@ reservedPtr = C.nullPtr
 
 data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 
-callUnary :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
-callUnary ctx@(ClientContext chan cq _) co method md arg = do
+callUnary :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
+callUnary ctx@(ClientContext chan cq _) co method arg = do
   deadline <- resolveDeadline co
   bracket (grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
     crw <- newClientReaderWriter ctx mcall
 
-    sendInitOp <- opSendInitialMetadata md
+    sendInitOp <- opSendInitialMetadata (coMetadata co)
     sendCloseOp <- opSendCloseFromClient
     sendMessageOp <- opSendMessage arg
     recvStatusOp <- opRecvStatusOnClient crw
@@ -175,13 +179,13 @@ callUnary ctx@(ClientContext chan cq _) co method md arg = do
           _ -> return (RpcError (StatusError status statusDetails))
       RpcError err -> return (RpcError err)
 
-callDownstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
-callDownstream ctx@(ClientContext chan cq _) co method md arg = do
+callDownstream :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
+callDownstream ctx@(ClientContext chan cq _) co method arg = do
   deadline <- resolveDeadline co
   mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
   crw <- newClientReaderWriter ctx mcall
 
-  sendInitOp <- opSendInitialMetadata md
+  sendInitOp <- opSendInitialMetadata (coMetadata co)
   sendCloseOp <- opSendCloseFromClient
   sendMessageOp <- opSendMessage arg
 
@@ -195,13 +199,13 @@ callDownstream ctx@(ClientContext chan cq _) co method md arg = do
       return (RpcOk (Client crw defaultEncoder defaultDecoder))
     RpcError err -> return (RpcError err)
 
-callUpstream :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
-callUpstream ctx@(ClientContext chan cq _) co method md = do
+callUpstream :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
+callUpstream ctx@(ClientContext chan cq _) co method = do
   deadline <- resolveDeadline co
   mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
   crw <- newClientReaderWriter ctx mcall
 
-  sendInitOp <- opSendInitialMetadata md
+  sendInitOp <- opSendInitialMetadata (coMetadata co)
 
   res <- callBatch crw [ OpX sendInitOp ]
   case res of
@@ -209,13 +213,13 @@ callUpstream ctx@(ClientContext chan cq _) co method md = do
       return (RpcOk (Client crw defaultEncoder defaultDecoder))
     RpcError err -> return (RpcError err)
 
-callBidi :: ClientContext -> CallOptions -> MethodName -> [Metadata] -> IO (RpcReply (Client B.ByteString L.ByteString))
-callBidi ctx@(ClientContext chan cq _) co method md = do
+callBidi :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
+callBidi ctx@(ClientContext chan cq _) co method = do
   deadline <- resolveDeadline co
   mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
 
   crw <- newClientReaderWriter ctx mcall
-  sendInitOp <- opSendInitialMetadata md
+  sendInitOp <- opSendInitialMetadata (coMetadata co)
 
   res <- callBatch crw [ OpX sendInitOp ]
   case res of
