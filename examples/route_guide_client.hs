@@ -71,20 +71,20 @@ main' = do
   channel <- createInsecureChannel "localhost:10001" mempty
   ctx <- newClientContext channel
 
-  let client = createRouteGuideClient channel ctx
+  let stub = createRouteGuideStub channel ctx
 
   measure "getFeature 1" $ do
-    res <- getFeature client (Point 2 2)
+    res <- getFeature stub (Point 2 2)
     print res
 
   measure "getFeature 2" $ do
-    let client' = client `withCallOptions` withMetadata [Metadata "my-key" "my-value" 0]
-    res <- getFeature client' (Point 42 42)
+    let stub' = stub `withCallOptions` withMetadata [Metadata "my-key" "my-value" 0]
+    res <- getFeature stub' (Point 42 42)
     print res
 
   measure "listFeatures" $ do
     let rect = Rectangle (Point 0 0) (Point 16 16)
-    reader <- listFeatures client rect
+    reader <- listFeatures stub rect
     features' <- withNewClient reader $ do
       let
         readAll acc = do
@@ -101,7 +101,7 @@ main' = do
     print features'
 
   measure "recordRoute" $ do
-    record <- recordRoute client
+    record <- recordRoute stub
     rt <- withNewClient record $ do
       forM_ [ Point x x | x <- [0..20] ] $ \p ->
         sendMessage (fromPoint p)
@@ -114,7 +114,7 @@ main' = do
     print rt
 
   measure "async routeChat" $ do
-    RpcOk route <- routeChat client
+    RpcOk route <- routeChat stub
     block <- newEmptyMVar
     _ <- forkIO $ do -- the go example does this in a concurrent thread
           --initMetadata <- getInitialMetadata recvInitMetadata
@@ -191,7 +191,7 @@ fromPoint (Point a b) = B.pack [0x08, a, 0x10, b]
 
 type RouteSummary = L.ByteString
 
-data RouteGuideClient = RouteGuideClient {
+data RouteGuideStub = RouteGuideStub {
   _channel       :: Channel,
   _callOptions   :: CallOptions,
   _clientContext :: ClientContext,
@@ -201,27 +201,27 @@ data RouteGuideClient = RouteGuideClient {
   _routeChat     :: ClientContext -> CallOptions -> IO (RpcReply (Client B.ByteString L.ByteString))
 }
 
-withCallOptions :: RouteGuideClient -> CallOptions -> RouteGuideClient
+withCallOptions :: RouteGuideStub -> CallOptions -> RouteGuideStub
 withCallOptions client co = client { _callOptions = co }
 
-getFeature :: RouteGuideClient -> Point -> IO (RpcReply (UnaryResult L.ByteString))
+getFeature :: RouteGuideStub -> Point -> IO (RpcReply (UnaryResult L.ByteString))
 getFeature client =
   _getFeature client (_clientContext client) (_callOptions client)
 
-listFeatures :: RouteGuideClient -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString))
+listFeatures :: RouteGuideStub -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString))
 listFeatures client =
   _listFeatures client (_clientContext client) (_callOptions client)
 
-recordRoute :: RouteGuideClient -> IO (RpcReply (Client B.ByteString RouteSummary))
+recordRoute :: RouteGuideStub -> IO (RpcReply (Client B.ByteString RouteSummary))
 recordRoute client =
   _recordRoute client (_clientContext client) (_callOptions client)
 
-routeChat :: RouteGuideClient -> IO (RpcReply (Client B.ByteString L.ByteString))
+routeChat :: RouteGuideStub -> IO (RpcReply (Client B.ByteString L.ByteString))
 routeChat client =
   _routeChat client (_clientContext client) (_callOptions client)
 
-createRouteGuideClient :: Channel -> ClientContext -> RouteGuideClient
-createRouteGuideClient chan ctx0 = RouteGuideClient {
+createRouteGuideStub :: Channel -> ClientContext -> RouteGuideStub
+createRouteGuideStub chan ctx0 = RouteGuideStub {
   _channel = chan,
   _callOptions = mempty,
   _clientContext = ctx0,
