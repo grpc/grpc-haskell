@@ -35,6 +35,7 @@ library
 
   other-modules:
     Network.Grpc.Lib.ChannelArgsStrings
+    Network.Grpc.Lib.PropagationBits
 
   build-depends:       base >=4.6 && <4.10, bytestring, async, unordered-containers, transformers >= 0.4.1.0
   hs-source-dirs:      src
