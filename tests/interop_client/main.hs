@@ -190,8 +190,9 @@ runTest LargeUnary opts = runLargeUnaryTest opts
 runTest CustomMetadata opts = runCustomMetadataTest opts
 runTest UnimplementedMethod opts = runUnimplementedMethodTest opts
 
-hostPort :: Options -> B.ByteString
-hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
+newChannel :: Options -> IO Channel
+newChannel opts =
+  createInsecureChannel (C8.pack (optServerHost opts)) (optServerPort opts) mempty
 
 -- | This test verifies that implementations support zero-size messages.
 -- Ideally, client implementations would verify that the request and
@@ -210,7 +211,7 @@ hostPort Options{..} = C8.pack (optServerHost ++ ":" ++ show optServerPort)
 -- to ensure that the proto serialized to zero bytes.
 runEmptyUnaryTest :: Options -> IO (Either String ())
 runEmptyUnaryTest opts =
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+  bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx callOptions "/grpc.testing.TestService/EmptyCall" B.empty
       case resp of
@@ -244,7 +245,7 @@ runLargeUnaryTest opts = do
                     _Payload'body = B.replicate 271828 0
                   }
                 }
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+  bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
       case resp of
@@ -331,7 +332,7 @@ runCustomMetadataTest opts = do
                   , _SimpleRequest'payload = Just def {
                       _Payload'body = B.replicate 271828 0 }
                   }
-      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+      bracket (newChannel opts) destroyChannel $ \channel ->
         bracket (newClientContext channel) destroyClientContext $ \ctx -> do
           resp <- callUnary ctx callOptions' "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
           case resp of
@@ -346,7 +347,7 @@ runCustomMetadataTest opts = do
         req = def { _StreamingOutputCallRequest'responseParameters = [ def { _ResponseParameters'size = 314159 } ]
                   , _StreamingOutputCallRequest'payload = Just def { _Payload'body = B.replicate 271828 0 }
                   }
-      bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+      bracket (newChannel opts) destroyChannel $ \channel ->
         bracket (newClientContext channel) destroyClientContext $ \ctx -> do
           client <- callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall"
           mds <- withNewClient client $ do
@@ -374,7 +375,7 @@ runCustomMetadataTest opts = do
 --  - received status message is empty or null/unset
 runUnimplementedMethodTest :: Options -> IO (Either String ())
 runUnimplementedMethodTest opts =
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+  bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx callOptions "/grpc.testing.UnimplementedService/UnimplementedCall" B.empty
       case resp of
@@ -393,7 +394,7 @@ runUnimplementedMethodTest opts =
 --  - exactly zero responses
 runEmptyStreamTest :: Options -> IO (Either String ())
 runEmptyStreamTest opts =
-  bracket (createInsecureChannel (hostPort opts) mempty) grpcChannelDestroy $ \channel ->
+  bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
       resp <- withNewClient client $ do

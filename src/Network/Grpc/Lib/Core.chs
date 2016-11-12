@@ -24,11 +24,12 @@
 -- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --
 --------------------------------------------------------------------------------
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, OverloadedStrings #-}
 
 module Network.Grpc.Lib.Core where
 
 import Data.List(genericLength)
+import Data.Monoid ((<>))
 import Foreign.C.Types
 import Foreign.Marshal.Utils
 import Foreign.Marshal.Alloc
@@ -36,6 +37,7 @@ import Foreign.Storable
 import Foreign.Ptr (Ptr, nullPtr, castPtr, plusPtr)
 
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C8
 import Data.ByteString (ByteString, useAsCString)
 
 import qualified Data.HashMap.Strict as Map
@@ -115,20 +117,31 @@ withChannelArgs (toList -> args) act =
 -- --------------------
 
 data CChannel
-{#pointer *channel as Channel foreign -> CChannel#}
+{#pointer *grpc_channel as GrpcChannel foreign -> CChannel#}
 
 {#fun unsafe grpc_insecure_channel_create as ^
   { useAsCString* `ByteString',
     withChannelArgs* `ChannelArgs',
-    id `Ptr ()' } -> `Channel'#}
+    id `Ptr ()' } -> `GrpcChannel'#}
 
-createInsecureChannel :: B.ByteString -> ChannelArgs -> IO Channel
-createInsecureChannel hostPort args =
-    grpcInsecureChannelCreate hostPort args nullPtr
+data Channel = Channel
+  { cChannel :: !GrpcChannel
+  , cHost    :: !B.ByteString
+  }
+
+createInsecureChannel :: B.ByteString -> Int -> ChannelArgs -> IO Channel
+createInsecureChannel host port args = do
+  chan <- grpcInsecureChannelCreate hostPort args nullPtr
+  return $! Channel chan host
+  where
+    hostPort = host <> ":" <> (C8.pack (show port))
 
 {#fun unsafe grpc_channel_destroy as ^
-  { `Channel' } -> `()'#}
+  { `GrpcChannel' } -> `()'#}
 
+destroyChannel :: Channel -> IO ()
+destroyChannel chan =
+  grpcChannelDestroy (cChannel chan)
 
 -- ---------------------------
 -- Completion Queue and events
@@ -233,7 +246,7 @@ fromCallError :: CallError -> CInt
 fromCallError = fromIntegral . fromEnum
 
 {#fun unsafe hs_grpc_channel_create_call as grpcChannelCreateCall
-  { `Channel',
+  { `GrpcChannel',
     id `Ptr CCall',
     fromIntegral `PropagationMask',
     `CompletionQueue',

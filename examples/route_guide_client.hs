@@ -68,7 +68,7 @@ main = withGrpc main'
 main' :: IO ()
 main' = do
   BC8.putStrLn version
-  channel <- createInsecureChannel "localhost:10001" mempty
+  channel <- createInsecureChannel "localhost" 10001 mempty
   ctx <- newClientContext channel
 
   let stub = createRouteGuideStub channel ctx
@@ -132,7 +132,7 @@ main' = do
   destroyClientContext ctx
 
   putStrLn "*** Destroying channel"
-  grpcChannelDestroy channel
+  destroyChannel channel
 
 -- ----------------------------------------------
 -- Example data

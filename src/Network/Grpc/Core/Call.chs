@@ -149,7 +149,7 @@ data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 callUnary :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
 callUnary ctx@(ClientContext chan cq _) co method arg = do
   deadline <- resolveDeadline co
-  bracket (grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
+  bracket (grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
     crw <- newClientReaderWriter ctx mcall
 
     sendInitOp <- opSendInitialMetadata (coMetadata co)
@@ -182,7 +182,7 @@ callUnary ctx@(ClientContext chan cq _) co method arg = do
 callDownstream :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
 callDownstream ctx@(ClientContext chan cq _) co method arg = do
   deadline <- resolveDeadline co
-  mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
   crw <- newClientReaderWriter ctx mcall
 
   sendInitOp <- opSendInitialMetadata (coMetadata co)
@@ -202,7 +202,7 @@ callDownstream ctx@(ClientContext chan cq _) co method arg = do
 callUpstream :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
 callUpstream ctx@(ClientContext chan cq _) co method = do
   deadline <- resolveDeadline co
-  mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
   crw <- newClientReaderWriter ctx mcall
 
   sendInitOp <- opSendInitialMetadata (coMetadata co)
@@ -216,7 +216,7 @@ callUpstream ctx@(ClientContext chan cq _) co method = do
 callBidi :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
 callBidi ctx@(ClientContext chan cq _) co method = do
   deadline <- resolveDeadline co
-  mcall <- grpcChannelCreateCall chan C.nullPtr propagateDefaults cq method "localhost" deadline >>= newMVar
+  mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
 
   crw <- newClientReaderWriter ctx mcall
   sendInitOp <- opSendInitialMetadata (coMetadata co)
