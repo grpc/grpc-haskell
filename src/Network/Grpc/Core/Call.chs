@@ -77,7 +77,7 @@ data CallOptions = CallOptions
   { coDeadline :: Maybe Deadline
   , coParentContext :: Maybe () -- todo
   , coPropagationMask :: Maybe PropagationMask
-  , coMetadata :: [Metadata] -- todo
+  , coMetadata :: [Metadata]
   }
 
 instance Monoid CallOptions where
