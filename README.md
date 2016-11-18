@@ -5,13 +5,14 @@ production use.
 
 The haskell library wraps the [C library](https://github.com/grpc/grpc). Only
 the client side of RPCs are supported.
-`grpc-haskell` does not generate the RPC stubs, nor does it handle proto
-serialization/deserialization.
+`grpc-haskell` does not generate the RPC stubs, nor does it
+handle proto serialization/deserialization. Projects that generate Haskell code
+for serialization/deserialization may also generate stubs that use
+`grpc-haskell`.
 
 Client side features;
  - [x] Low level API for client calls, streaming and unary.
  - [ ] Higher level client API.
- - [ ] Generate RPC stubs from proto files.
 
 ## License
 
