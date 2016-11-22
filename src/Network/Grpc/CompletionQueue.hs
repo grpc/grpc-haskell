@@ -46,7 +46,8 @@ data Worker = Worker {
 }
 
 type EventId = Int
-type EventMap = MVar (Map.HashMap EventId (MVar Event))
+type Finalizer = IO ()
+type EventMap = MVar (Map.HashMap EventId (MVar Event, Finalizer))
 
 data EventDesc = EventDesc (MVar Event) EventId
 
@@ -66,18 +67,14 @@ eventIdFromTag :: Tag -> EventId
 eventIdFromTag tag = tag `minusPtr` nullPtr
 
 runWorker :: CompletionQueue -> Worker -> IO ()
-runWorker cq (Worker { cqEventMap = emap, cqFinished = signalFinished }) = go
+runWorker cq Worker{cqEventMap = emap, cqFinished = signalFinished} = go
   where
     go = do
-      -- putStrLn "** runWorker: blocking for next event"
       e <- grpcCompletionQueueNext cq gprInfFuture
-      -- putStrLn "** runWorker: got event, handling"
-      -- print e
       case e of
         QueueTimeOut -> return ()
         QueueShutdown -> do
           completionQueueDestroy cq
-          -- putStrLn "** runWorker exiting"
           b <- tryPutMVar signalFinished ()
           unless b $ putStrLn "** runWorker: error; multiple workers"
         QueueOpComplete _ tag -> do
@@ -86,23 +83,25 @@ runWorker cq (Worker { cqEventMap = emap, cqFinished = signalFinished }) = go
                 emap'' = Map.delete (eventIdFromTag tag) emap'
             in return (emap'', mvar)
           case mvar of
-            Just mvar' -> do
+            Just (mvar', finalizer) -> do
+              exc <- try finalizer
+              case exc of
+                Left some -> putStrLn ("** runWorker: finalizer threw exception; " ++ show (some :: SomeException))
+                Right _ -> return ()
               b <- tryPutMVar mvar' e
               unless b $ putStrLn "** runWorker: I wasn't first"
             Nothing -> putStrLn ("** runWorker: could not find tag = " ++ show (eventIdFromTag tag) ++ ", ignoring")
           go
 
-withEvent :: Worker -> (EventDesc -> IO a) -> IO a
-withEvent (Worker { cqEventMap = emap, cqNextEventId = nextEventIdMVar }) = bracket aquire release
+withEvent :: Worker -> IO () -> (EventDesc -> IO a) -> IO a
+withEvent Worker{cqEventMap = emap, cqNextEventId = nextEventIdMVar} finish = bracket aquire release
   where
     aquire = do
       eventId <- modifyMVar nextEventIdMVar $ \eventId -> let nextEventId = eventId + 1 in nextEventId `seq` return (nextEventId, eventId)
       eventMVar <- newEmptyMVar
-      modifyMVar_ emap $ \emap' -> return $! Map.insert eventId eventMVar emap'
-      -- putStrLn $ "** expecting eventId = " ++ show eventId
+      modifyMVar_ emap $ \emap' -> return $! Map.insert eventId (eventMVar, finish) emap'
       return (EventDesc eventMVar eventId)
     release (EventDesc eventMVar eventId) = do
-      -- putStrLn $ "** no longer expecting eventId = " ++ show eventId
       b <- tryPutMVar eventMVar (error "withEvent: unused event cleanup")
       when b $ modifyMVar_ emap $ \emap' -> return $! Map.delete eventId emap'
 

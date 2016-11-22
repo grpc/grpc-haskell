@@ -258,9 +258,9 @@ newClientReaderWriter ctx mcall = do
 
 data OpX = forall t. OpX (OpT t)
 
-data OpArray = OpArray { opArrPtr :: !GrpcOpPtr
-                       , opArrLen :: !CULong
-                       , opArrFree :: !(IO ())
+data OpArray = OpArray { opArrPtr           :: !GrpcOpPtr
+                       , opArrLen           :: !CULong
+                       , opArrFinishAndFree :: !(IO ())
                        }
 
 toArray :: [OpX] -> IO OpArray
@@ -279,23 +279,20 @@ toArray ops = do
 callBatch :: ClientReaderWriter -> [OpX] -> IO (RpcReply ())
 callBatch crw ops = do
   let ctx = context crw
-  CQ.withEvent (ccWorker ctx) $ \eDesc -> do
-    arr <- toArray ops
+  arr <- toArray ops
+  let onBatchComplete = opArrFinishAndFree arr
+  CQ.withEvent (ccWorker ctx) onBatchComplete $ \eDesc -> do
     callStatus <- withMVar (callMVar_ crw) $ \call ->
       grpcCallStartBatch call (opArrPtr arr) (opArrLen arr) (CQ.eventTag eDesc) reservedPtr
-    -- print ("callStatus: " ++ show callStatus)
     case callStatus of
       CallOk -> do
         e <- CQ.interruptibleWaitEvent eDesc
-        -- print ("event: " ++ show e)
-        opArrFree arr -- TODO: We leak if we're interrupted.
         case e of
           QueueOpComplete OpSuccess _ -> return (RpcOk ())
           QueueOpComplete OpError _ -> return (RpcError (Error "callBatch: op error"))
           QueueTimeOut -> return (RpcError DeadlineExceeded)
           QueueShutdown -> return (RpcError (Error "queue shutdown"))
       _ -> do
-         -- print callStatus
          return (RpcError (CallErrorStatus callStatus))
 
 data OpT out = Op
