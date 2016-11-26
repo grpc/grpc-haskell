@@ -95,9 +95,11 @@ main' = do
               readAll (m:acc)
             Nothing -> do
               liftIO $ putStrLn "No more messages"
-              closeCall
               return (reverse acc)
-      readAll []
+      msgs <- readAll []
+      status <- waitForStatus
+      closeCall
+      return (msgs, status)
     print features'
 
   measure "recordRoute" $ do
