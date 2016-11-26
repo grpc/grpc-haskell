@@ -246,14 +246,14 @@ data ClientReaderWriter = ClientReaderWriter {
   callMVar_ :: MVar Call,
   initialMDRef :: !(IORef (Maybe [Metadata])),
   trailingMDRef :: !(IORef (Maybe [Metadata])),
-  statusFromServer :: !(IORef (Maybe RpcStatus))
+  statusFromServer :: !(MVar RpcStatus)
 }
 
 newClientReaderWriter :: ClientContext -> MVar Call -> IO ClientReaderWriter
 newClientReaderWriter ctx mcall = do
   initMD <- newIORef Nothing
   trailMD <- newIORef Nothing
-  status <- newIORef Nothing
+  status <- newEmptyMVar
   return (ClientReaderWriter ctx mcall initMD trailMD status)
 
 data OpX = forall t. OpX (OpT t)
@@ -398,7 +398,7 @@ opRecvStatusOnClient (ClientReaderWriter{..}) = do
       statusDetails <- B.packCString =<< C.peek ptrPtrStatusStr
       let status = RpcStatus trailingMd statusCode statusDetails
       writeIORef value status
-      writeIORef statusFromServer (Just status)
+      putMVar statusFromServer status
       free
     free = do
       freeMetadataArray trailingMetadataArrPtr
@@ -459,7 +459,7 @@ recvMessage crw = do
 
 clientWaitForStatus :: ClientReaderWriter -> IO (RpcReply RpcStatus)
 clientWaitForStatus crw@(ClientReaderWriter{..}) = do
-  status <- readIORef statusFromServer
+  status <- tryReadMVar statusFromServer
   case status of
     Nothing -> do
       recvStatusOp <- opRecvStatusOnClient crw
@@ -520,20 +520,45 @@ withClient client m = do
     Left err -> return (RpcError err)
     Right a -> return (RpcOk a)
 
+clientRWOp :: (ClientReaderWriter -> IO a) -> Rpc req resp a
+clientRWOp act = do
+  crw <- askCrw
+  liftIO (act crw)
+
+joinClientRWOp :: (ClientReaderWriter -> IO (RpcReply a)) -> Rpc req resp a
+joinClientRWOp act = do
+  x <- clientRWOp act
+  joinReply x
+
+abortIfStatus :: Rpc req resp ()
+abortIfStatus = do
+  status <- clientRWOp (tryReadMVar . statusFromServer)
+  case status of
+    Nothing -> return ()
+    Just (RpcStatus _ code msg) ->
+      -- call has ended. no further batch ops can be executed.
+      -- doesn't have to be an error, could be 200!
+      lift (throwE (StatusError code msg))
+
 initialMetadata :: Rpc req resp [Metadata]
 initialMetadata = do
-  crw <- askCrw
-  joinReply =<< liftIO (clientWaitForInitialMetadata crw)
+  status <- clientRWOp (tryReadMVar . statusFromServer)
+  case status of
+    Nothing -> joinClientRWOp clientWaitForInitialMetadata
+    Just (RpcStatus md _ _) -> do
+      return md
 
 waitForStatus :: Rpc req resp RpcStatus
 waitForStatus = do
-  crw <- askCrw
-  joinReply =<< liftIO (clientWaitForStatus crw)
+  status <- clientRWOp (tryReadMVar . statusFromServer)
+  case status of
+    Nothing -> joinClientRWOp clientWaitForStatus
+    Just status' -> return status'
 
 receiveMessage :: Rpc req resp (Maybe resp)
 receiveMessage = do
-  crw <- askCrw
-  msg <- joinReply =<< liftIO (clientRead crw)
+  abortIfStatus
+  msg <- joinClientRWOp clientRead
   case msg of
     Nothing -> return Nothing
     Just x -> do
@@ -542,10 +567,9 @@ receiveMessage = do
 
 receiveAllMessages :: Rpc req resp [resp]
 receiveAllMessages = do
-  crw <- askCrw
   decoder <- askDecoder
   let go acc = do
-        value <- joinReply =<< liftIO (clientRead crw)
+        value <- joinClientRWOp clientRead
         case value of
           Just x -> do
             y <- joinReply =<< (liftIO (decoder x))
@@ -554,21 +578,20 @@ receiveAllMessages = do
   go []
 
 sendMessage :: req -> Rpc req resp ()
-sendMessage o = do
-  crw <- askCrw
+sendMessage req = do
+  abortIfStatus
   encoder <- askEncoder
-  x <- joinReply =<< liftIO (encoder o)
-  joinReply =<< liftIO (clientWrite crw x)
+  bs <- joinReply =<< liftIO (encoder req)
+  joinClientRWOp (\crw -> clientWrite crw bs)
 
 sendHalfClose :: Rpc req resp ()
 sendHalfClose = do
-  crw <- askCrw
-  joinReply =<< liftIO (clientSendHalfClose crw)
+  abortIfStatus
+  joinClientRWOp clientSendHalfClose
 
 closeCall :: Rpc req resp ()
-closeCall = do
-  crw <- askCrw
-  liftIO (clientClose crw)
+closeCall =
+  clientRWOp clientClose
 
 data RpcReply a
   = RpcOk a
