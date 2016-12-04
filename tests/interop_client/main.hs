@@ -26,7 +26,6 @@
 --------------------------------------------------------------------------------
 
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 module Main where
 
 import           Control.Exception
@@ -52,7 +51,9 @@ import           Proto.Src.Proto.Grpc.Testing.Messages (Payload (..),
                                                         ResponseParameters (..),
                                                         SimpleRequest (..),
                                                         SimpleResponse (..),
-                                                        StreamingOutputCallRequest (..))
+                                                        StreamingOutputCallRequest (..),
+                                                        StreamingInputCallRequest (..),
+                                                        StreamingInputCallResponse (..))
 
 data Options = Options
   { optServerHost            :: String
@@ -73,6 +74,7 @@ data TestCaseFlag
 
 data TestCase
   = EmptyStream
+  | ClientStreaming
   | EmptyUnary
   | LargeUnary
   | CustomMetadata
@@ -101,6 +103,7 @@ stringToBool "TRUE" = True
 stringToBool _      = False
 
 testCase :: String -> TestCaseFlag
+testCase "client_streaming"     = TestCase ClientStreaming
 testCase "empty_stream"         = TestCase EmptyStream
 testCase "empty_unary"          = TestCase EmptyUnary
 testCase "large_unary"          = TestCase LargeUnary
@@ -180,15 +183,16 @@ testWrapper tc act =
       case result of
         Right _ -> putStrLn (show tc ++ ": ok")
         Left err -> do
-          putStrLn err
+          putStrLn (show tc ++ ": failed; " ++ err)
           exitFailure)
 
 runTest :: TestCase -> Options -> IO (Either String ())
-runTest EmptyStream opts = runEmptyStreamTest opts
-runTest EmptyUnary opts = runEmptyUnaryTest opts
-runTest LargeUnary opts = runLargeUnaryTest opts
-runTest CustomMetadata opts = runCustomMetadataTest opts
-runTest UnimplementedMethod opts = runUnimplementedMethodTest opts
+runTest ClientStreaming = runClientStreamingTest
+runTest CustomMetadata = runCustomMetadataTest
+runTest EmptyStream = runEmptyStreamTest
+runTest EmptyUnary = runEmptyUnaryTest
+runTest LargeUnary = runLargeUnaryTest
+runTest UnimplementedMethod = runUnimplementedMethodTest
 
 newChannel :: Options -> IO Channel
 newChannel opts =
@@ -406,5 +410,36 @@ runEmptyStreamTest opts =
         RpcOk msgs
           | null msgs -> return (Right ())
           | otherwise -> return (Left ("expected no messages, got " ++ show msgs))
+        RpcError err ->
+          return (Left (show err))
+
+runClientStreamingTest :: Options -> IO (Either String ())
+runClientStreamingTest opts = do
+  let
+    requestSizes = [27182, 8, 1828, 45904]
+    expectedResponseSize = 74922
+    req n =
+      def { _StreamingInputCallRequest'payload = Just def { _Payload'body = B.replicate n 0 }
+          }
+    assertResponse resp
+      | respSize == expectedResponseSize = Right ()
+      | otherwise = Left ("aggregated_payload_size=" ++ show respSize ++ ", expected " ++ show expectedResponseSize)
+      where
+       respSize = _StreamingInputCallResponse'aggregatedPayloadSize resp
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall"
+      resp <- withNewClient client $ do
+        forM_ requestSizes $ \n ->
+          sendMessage (encodeMessage (req n))
+        sendHalfClose
+        msg <- receiveMessage
+        closeCall
+        case maybe (Left "no message") (decodeMessage . L.toStrict) msg of
+          Right msg' -> return msg'
+          Left err -> fail err
+      case resp of
+        RpcOk resp' ->
+          return (assertResponse resp')
         RpcError err ->
           return (Left (show err))
