@@ -74,7 +74,7 @@ data CByteBufferReader
 {#pointer *byte_buffer_reader as ByteBufferReader -> CByteBufferReader#}
 
 data CSlice
-{#pointer *gpr_slice as Slice -> CSlice#}
+{#pointer *grpc_slice as Slice -> CSlice#}
 
 type SizeT = {#type size_t#}
 
@@ -91,18 +91,18 @@ withByteString bs act = do
 
 toByteString :: Slice -> IO ByteString
 toByteString slice = do
-  refcount <- {#get gpr_slice->refcount#} slice
+  refcount <- {#get grpc_slice->refcount#} slice
   if refcount == nullPtr
     then fromInlined
     else fromRefcounted
   where
     fromInlined = do
-      len <- {#get gpr_slice->data.inlined.length#} slice
-      ptr <- {#get gpr_slice->data.inlined.bytes#} slice
+      len <- {#get grpc_slice->data.inlined.length#} slice
+      ptr <- {#get grpc_slice->data.inlined.bytes#} slice
       B.packCStringLen (castPtr ptr, fromIntegral len)
     fromRefcounted = do
-      len <- {#get gpr_slice->data.refcounted.length#} slice
-      ptr <- {#get gpr_slice->data.refcounted.bytes#} slice
+      len <- {#get grpc_slice->data.refcounted.length#} slice
+      ptr <- {#get grpc_slice->data.refcounted.bytes#} slice
       B.packCStringLen (castPtr ptr, fromIntegral len)
 
 toLazyByteString :: ByteBuffer -> IO L.ByteString
@@ -119,13 +119,13 @@ toLazyByteString bb =
       if ok
         then do
           bs <- toByteString slice
-          gprSliceUnref slice
+          grpcSliceUnref slice
           go bbr slice (bs:acc)
         else return $! L.fromChunks (reverse acc)
 
 allocaSlice :: (Slice -> IO a) -> IO a
 allocaSlice act = do
-  allocaBytes {#sizeof gpr_slice#} $ \p -> act p
+  allocaBytes {#sizeof grpc_slice#} $ \p -> act p
 
 allocaByteBufferReader :: (ByteBufferReader -> IO a) -> IO a
 allocaByteBufferReader act = do
@@ -139,7 +139,7 @@ allocaByteBufferReader act = do
 
 -- | Updates the 'Slice' with the next piece of data from the reader
 -- and returns True. Returns False at the end of the stream. The caller
--- is responsible for calling 'gpr_slice_unref' on the result.
+-- is responsible for calling 'grpc_slice_unref' on the result.
 {#fun unsafe byte_buffer_reader_next as ^
   {`ByteBufferReader', `Slice'} -> `Bool'#}
 
@@ -157,5 +157,5 @@ allocaByteBufferReader act = do
 
 -- | Unref a 'Slice'. When the reference counter reaches zero, the slice will
 -- be deallocated.
-{#fun unsafe gpr_slice_unref as ^
+{#fun unsafe grpc_slice_unref as ^
   {%`Slice'} -> `()' #}

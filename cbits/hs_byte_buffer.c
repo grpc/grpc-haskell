@@ -30,13 +30,13 @@
 #include <grpc/byte_buffer.h>
 
 grpc_byte_buffer *hs_raw_byte_buffer_create(const char *source, size_t len) {
-    gpr_slice slice = gpr_slice_from_copied_buffer(source, len);
+    grpc_slice slice = grpc_slice_from_copied_buffer(source, len);
     grpc_byte_buffer *bb = grpc_raw_byte_buffer_create(&slice, 1);
-    gpr_slice_unref(slice);
+    grpc_slice_unref(slice);
     return bb;
 }
 
-void hs_grpc_byte_buffer_reader_readall(grpc_byte_buffer_reader *reader, gpr_slice *out_slice) {
-	gpr_slice tmp = grpc_byte_buffer_reader_readall(reader);
-	memcpy(out_slice, &tmp, sizeof(gpr_slice));
+void hs_grpc_byte_buffer_reader_readall(grpc_byte_buffer_reader *reader, grpc_slice *out_slice) {
+	grpc_slice tmp = grpc_byte_buffer_reader_readall(reader);
+	memcpy(out_slice, &tmp, sizeof(grpc_slice));
 }
