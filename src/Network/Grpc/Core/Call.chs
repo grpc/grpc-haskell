@@ -576,13 +576,14 @@ abortIfStatus =
 
 initialMetadata :: Rpc req resp [Metadata]
 initialMetadata = do
-  status <- clientRWOp (tryReadMVar . statusFromServer)
+  status <- clientRWOp (readIORef . initialMDRef)
   case status of
-    Nothing -> joinClientRWOp clientWaitForInitialMetadata
-    Just (RpcStatus md statusCode statusDetail) -> do
-      case statusCode of
-        StatusOk -> return md
-        _ -> lift (throwE (StatusError statusCode statusDetail))
+    Just md -> return md
+    Nothing ->
+      branchOnStatus
+        (joinClientRWOp clientWaitForInitialMetadata)
+        (joinClientRWOp clientWaitForInitialMetadata)
+        (\code msg -> lift (throwE (StatusError code msg)))
 
 waitForStatus :: Rpc req resp RpcStatus
 waitForStatus = do
