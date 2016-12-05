@@ -554,15 +554,25 @@ joinClientRWOp act = do
   x <- clientRWOp act
   joinReply x
 
-abortIfStatus :: Rpc req resp ()
-abortIfStatus = do
+
+branchOnStatus :: Rpc req resp a
+               -> Rpc req resp a
+               -> (StatusCode -> B.ByteString -> Rpc req resp a)
+               -> Rpc req resp a
+branchOnStatus onProcessing onSuccess onFail = do
   status <- clientRWOp (tryReadMVar . statusFromServer)
   case status of
-    Nothing -> return ()
-    Just (RpcStatus _ code msg) ->
-      -- call has ended. no further batch ops can be executed.
-      -- doesn't have to be an error, could be 200!
-      lift (throwE (StatusError code msg))
+    Nothing -> onProcessing
+    Just (RpcStatus _ code msg)
+      | code == StatusOk -> onSuccess
+      | otherwise -> onFail code msg
+
+abortIfStatus :: Rpc req resp ()
+abortIfStatus =
+  branchOnStatus
+    (return ())
+    (return ())
+    (\code msg -> lift (throwE (StatusError code msg)))
 
 initialMetadata :: Rpc req resp [Metadata]
 initialMetadata = do
@@ -583,13 +593,17 @@ waitForStatus = do
 
 receiveMessage :: Rpc req resp (Maybe resp)
 receiveMessage = do
-  abortIfStatus
-  msg <- joinClientRWOp clientRead
-  case msg of
-    Nothing -> return Nothing
-    Just x -> do
-      decoder <- askDecoder
-      liftM Just (joinReply =<< liftIO (decoder x))
+  let
+    onProcessing = do
+      msg <- joinClientRWOp clientRead
+      case msg of
+        Nothing -> return Nothing
+        Just x -> do
+          decoder <- askDecoder
+          liftM Just (joinReply =<< liftIO (decoder x))
+    onSuccess = return Nothing
+    onFail code msg = lift (throwE (StatusError code msg))
+  branchOnStatus onProcessing onSuccess onFail
 
 receiveAllMessages :: Rpc req resp [resp]
 receiveAllMessages = do
