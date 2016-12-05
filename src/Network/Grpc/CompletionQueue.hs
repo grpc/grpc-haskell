@@ -24,8 +24,9 @@
 -- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --
 --------------------------------------------------------------------------------
-module Network.Grpc.CompletionQueue where
 
+{-# LANGUAGE RecordWildCards #-}
+module Network.Grpc.CompletionQueue where
 
 import           Control.Concurrent
 import           Control.Exception
@@ -93,17 +94,23 @@ runWorker cq Worker{cqEventMap = emap, cqFinished = signalFinished} = go
             Nothing -> putStrLn ("** runWorker: could not find tag = " ++ show (eventIdFromTag tag) ++ ", ignoring")
           go
 
-withEvent :: Worker -> IO () -> (EventDesc -> IO a) -> IO a
-withEvent Worker{cqEventMap = emap, cqNextEventId = nextEventIdMVar} finish = bracket aquire release
-  where
-    aquire = do
-      eventId <- modifyMVar nextEventIdMVar $ \eventId -> let nextEventId = eventId + 1 in nextEventId `seq` return (nextEventId, eventId)
-      eventMVar <- newEmptyMVar
-      modifyMVar_ emap $ \emap' -> return $! Map.insert eventId (eventMVar, finish) emap'
-      return (EventDesc eventMVar eventId)
-    release (EventDesc eventMVar eventId) = do
-      b <- tryPutMVar eventMVar (error "withEvent: unused event cleanup")
-      when b $ modifyMVar_ emap $ \emap' -> return $! Map.delete eventId emap'
+withEvent :: Worker -> Finalizer -> (EventDesc -> IO a) -> IO a
+withEvent worker finish =
+  bracket
+    (allocateEvent worker finish)
+    (releaseEvent worker)
+
+allocateEvent :: Worker -> Finalizer -> IO EventDesc
+allocateEvent Worker{..} finish = do
+  eventId <- modifyMVar cqNextEventId $ \eventId -> let nextEventId = eventId + 1 in nextEventId `seq` return (nextEventId, eventId)
+  eventMVar <- newEmptyMVar
+  modifyMVar_ cqEventMap $ \eventMap -> return $! Map.insert eventId (eventMVar, finish) eventMap
+  return (EventDesc eventMVar eventId)
+
+releaseEvent :: Worker -> EventDesc -> IO ()
+releaseEvent Worker{..} (EventDesc eventMVar eventId) = do
+  b <- tryPutMVar eventMVar (error "releaseEvent: unused event cleanup")
+  when b $ modifyMVar_ cqEventMap $ \eventMap -> return $! Map.delete eventId eventMap
 
 interruptibleWaitEvent :: EventDesc -> IO Event
 interruptibleWaitEvent (EventDesc mvar _) = readMVar mvar
