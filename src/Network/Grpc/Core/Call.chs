@@ -196,7 +196,10 @@ callDownstream ctx@(ClientContext chan cq _) co method arg = do
       ]
   case res of
     RpcOk _ -> do
-      return (RpcOk (Client crw defaultEncoder defaultDecoder))
+      res' <- callBatchStatusOnClient crw
+      case res' of
+        RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
+        RpcError err -> return (RpcError err)
     RpcError err -> return (RpcError err)
 
 callUpstream :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
@@ -210,7 +213,10 @@ callUpstream ctx@(ClientContext chan cq _) co method = do
   res <- callBatch crw [ OpX sendInitOp ]
   case res of
     RpcOk _ -> do
-      return (RpcOk (Client crw defaultEncoder defaultDecoder))
+      res' <- callBatchStatusOnClient crw
+      case res' of
+        RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
+        RpcError err -> return (RpcError err)
     RpcError err -> return (RpcError err)
 
 callBidi :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
@@ -223,7 +229,11 @@ callBidi ctx@(ClientContext chan cq _) co method = do
 
   res <- callBatch crw [ OpX sendInitOp ]
   case res of
-    RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
+    RpcOk _ -> do
+      res' <- callBatchStatusOnClient crw
+      case res' of
+        RpcOk _ -> return (RpcOk (Client crw defaultEncoder defaultDecoder))
+        RpcError err -> return (RpcError err)
     RpcError err -> return (RpcError err)
 
 data Client req resp = Client
@@ -246,7 +256,8 @@ data ClientReaderWriter = ClientReaderWriter {
   callMVar_ :: MVar Call,
   initialMDRef :: !(IORef (Maybe [Metadata])),
   trailingMDRef :: !(IORef (Maybe [Metadata])),
-  statusFromServer :: !(MVar RpcStatus)
+  statusFromServer :: !(MVar RpcStatus),
+  statusFromServerTag :: !(MVar CQ.EventDesc)
 }
 
 newClientReaderWriter :: ClientContext -> MVar Call -> IO ClientReaderWriter
@@ -254,7 +265,8 @@ newClientReaderWriter ctx mcall = do
   initMD <- newIORef Nothing
   trailMD <- newIORef Nothing
   status <- newEmptyMVar
-  return (ClientReaderWriter ctx mcall initMD trailMD status)
+  statusEvent <- newEmptyMVar
+  return (ClientReaderWriter ctx mcall initMD trailMD status statusEvent)
 
 data OpX = forall t. OpX (OpT t)
 
@@ -294,6 +306,23 @@ callBatch crw ops = do
           QueueShutdown -> return (RpcError (Error "queue shutdown"))
       _ -> do
          return (RpcError (CallErrorStatus callStatus))
+
+callBatchStatusOnClient :: ClientReaderWriter -> IO (RpcReply ())
+callBatchStatusOnClient crw@ClientReaderWriter{..} = do
+  tag <- tryReadMVar statusFromServerTag
+  case tag of
+    Just _ -> return (RpcOk ()) -- already did this before
+    Nothing -> do
+      statusOp <- opRecvStatusOnClient crw
+      arr <- toArray [ OpX statusOp ]
+      let onBatchComplete = opArrFinishAndFree arr
+      eDesc <- CQ.allocateEvent (ccWorker context) onBatchComplete
+      putMVar statusFromServerTag eDesc
+      callStatus <- withMVar callMVar_ $ \call ->
+        grpcCallStartBatch call (opArrPtr arr) (opArrLen arr) (CQ.eventTag eDesc) reservedPtr
+      case callStatus of
+        CallOk -> return (RpcOk ())
+        _ -> return (RpcError (CallErrorStatus callStatus))
 
 data OpT out = Op
   { opAdd    :: [Ptr GrpcOp -> IO ()]
@@ -458,19 +487,9 @@ recvMessage crw = do
       return (RpcError err)
 
 clientWaitForStatus :: ClientReaderWriter -> IO (RpcReply RpcStatus)
-clientWaitForStatus crw@(ClientReaderWriter{..}) = do
-  status <- tryReadMVar statusFromServer
-  case status of
-    Nothing -> do
-      recvStatusOp <- opRecvStatusOnClient crw
-      res <- callBatch crw [ OpX recvStatusOp ]
-      case res of
-        RpcOk _ -> do
-          st <- opRead recvStatusOp
-          return (RpcOk st)
-        RpcError err -> do
-          return (RpcError err)
-    Just st -> return (RpcOk st)
+clientWaitForStatus ClientReaderWriter{..} = do
+  status <- readMVar statusFromServer
+  return (RpcOk status)
 
 clientClose :: ClientReaderWriter -> IO ()
 clientClose (ClientReaderWriter{..}) = do
@@ -488,9 +507,14 @@ clientSendHalfClose crw@(ClientReaderWriter{..}) = do
   callBatch crw [ OpX sendCloseOp ]
 
 clientCloseCall :: ClientReaderWriter -> IO ()
-clientCloseCall ClientReaderWriter { callMVar_ = callMVar } =
-  withMVar callMVar $ \call ->
-  grpcCallDestroy call
+clientCloseCall ClientReaderWriter{..} = do
+  tag <- tryTakeMVar statusFromServerTag
+  case tag of
+    Nothing -> return ()
+    Just eDesc ->
+      CQ.releaseEvent (ccWorker context) eDesc
+  withMVar callMVar_ $ \call ->
+    grpcCallDestroy call
 
 type Rpc req resp a = ReaderT (Client req resp) (ExceptT RpcError IO) a
 
