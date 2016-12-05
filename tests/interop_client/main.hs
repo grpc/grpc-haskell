@@ -323,10 +323,10 @@ runCustomMetadataTest opts = do
     metadata = [ expectedInitMd, expectedTrailMd ]
     callOptions' = callOptions <> withMetadata metadata
 
-    checkMetadata :: [Metadata] -> [Metadata] -> IO (Either String ())
-    checkMetadata initMd trailMd
-      | initMd /= [expectedInitMd] = return (Left ("wrong initial metadata, got " ++ show initMd))
-      | trailMd /= [expectedTrailMd] = return (Left ("wrong trailing metadata, got " ++ show trailMd))
+    checkMetadata :: String -> [Metadata] -> [Metadata] -> IO (Either String ())
+    checkMetadata desc initMd trailMd
+      | initMd /= [expectedInitMd] = return (Left (desc ++ ": wrong initial metadata, got " ++ show initMd))
+      | trailMd /= [expectedTrailMd] = return (Left (desc ++ ": wrong trailing metadata, got " ++ show trailMd))
       | otherwise = return (Right ())
 
     procedure1 :: IO (Either String ())
@@ -341,7 +341,7 @@ runCustomMetadataTest opts = do
           resp <- callUnary ctx callOptions' "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
           case resp of
             RpcOk (UnaryResult initMd trailMd _) ->
-              checkMetadata initMd trailMd
+              checkMetadata "procedure1" initMd trailMd
             RpcError err ->
               return (Left (show err))
 
@@ -364,7 +364,7 @@ runCustomMetadataTest opts = do
             return (initMd, trailMd)
           case mds of
             RpcOk (initMd, trailMd) ->
-              checkMetadata initMd trailMd
+              checkMetadata "procedure2" initMd trailMd
             RpcError err ->
               return (Left (show err))
 
