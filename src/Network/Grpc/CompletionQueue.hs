@@ -68,7 +68,7 @@ eventIdFromTag :: Tag -> EventId
 eventIdFromTag tag = tag `minusPtr` nullPtr
 
 runWorker :: CompletionQueue -> Worker -> IO ()
-runWorker cq Worker{cqEventMap = emap, cqFinished = signalFinished} = go
+runWorker cq Worker{..} = go
   where
     go = do
       e <- grpcCompletionQueueNext cq gprInfFuture
@@ -76,20 +76,20 @@ runWorker cq Worker{cqEventMap = emap, cqFinished = signalFinished} = go
         QueueTimeOut -> return ()
         QueueShutdown -> do
           completionQueueDestroy cq
-          b <- tryPutMVar signalFinished ()
+          b <- tryPutMVar cqFinished ()
           unless b $ putStrLn "** runWorker: error; multiple workers"
         QueueOpComplete _ tag -> do
-          mvar <- modifyMVar emap $ \emap' ->
-            let mvar = Map.lookup (eventIdFromTag tag) emap'
-                emap'' = Map.delete (eventIdFromTag tag) emap'
-            in return (emap'', mvar)
-          case mvar of
-            Just (mvar', finalizer) -> do
+          mDesc <- modifyMVar cqEventMap $ \eventMap ->
+            let mDesc = Map.lookup (eventIdFromTag tag) eventMap
+                eventMap' = Map.delete (eventIdFromTag tag) eventMap
+            in return (eventMap', mDesc)
+          case mDesc of
+            Just (mEvent, finalizer) -> do
               exc <- try finalizer
               case exc of
                 Left some -> putStrLn ("** runWorker: finalizer threw exception; " ++ show (some :: SomeException))
                 Right _ -> return ()
-              b <- tryPutMVar mvar' e
+              b <- tryPutMVar mEvent e
               unless b $ putStrLn "** runWorker: I wasn't first"
             Nothing -> putStrLn ("** runWorker: could not find tag = " ++ show (eventIdFromTag tag) ++ ", ignoring")
           go
