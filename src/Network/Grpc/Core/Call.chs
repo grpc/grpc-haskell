@@ -569,8 +569,10 @@ initialMetadata = do
   status <- clientRWOp (tryReadMVar . statusFromServer)
   case status of
     Nothing -> joinClientRWOp clientWaitForInitialMetadata
-    Just (RpcStatus md _ _) -> do
-      return md
+    Just (RpcStatus md statusCode statusDetail) -> do
+      case statusCode of
+        StatusOk -> return md
+        _ -> lift (throwE (StatusError statusCode statusDetail))
 
 waitForStatus :: Rpc req resp RpcStatus
 waitForStatus = do
