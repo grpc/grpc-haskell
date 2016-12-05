@@ -55,7 +55,7 @@ data EventDesc = EventDesc (MVar Event) EventId
 startCompletionQueueThread :: CompletionQueue -> IO Worker
 startCompletionQueueThread cq = do
   eventMap <- newMVar Map.empty
-  nextEventId <- newMVar 0
+  nextEventId <- newMVar 1
   finish <- newEmptyMVar
   let worker = Worker eventMap nextEventId finish
   _ <- forkIO $ runWorker cq worker
