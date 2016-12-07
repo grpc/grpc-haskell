@@ -164,16 +164,18 @@ main = do
       putStrLn (usageInfo "Usage: interop_client [OPTION]" options)
       exitFailure
     Right opts -> return opts
-  case optTestCase opts of
+  ok <- case optTestCase opts of
     AllTests ->
-      forM_ allTests $ \tc ->
+      fmap and $ forM allTests $ \tc ->
         testWrapper tc (runTest tc opts)
-    TestCaseUnknown tc ->
+    TestCaseUnknown tc -> do
       putStrLn ("Unknown or not specified test case: " ++ tc)
+      return False
     TestCase tc ->
       testWrapper tc (runTest tc opts)
+  unless ok exitFailure
 
-testWrapper :: TestCase -> IO (Either String ()) -> IO ()
+testWrapper :: TestCase -> IO (Either String ()) -> IO Bool
 testWrapper tc act =
   bracket_
     grpcInit
@@ -181,10 +183,12 @@ testWrapper tc act =
     (do
       result <- act
       case result of
-        Right _ -> putStrLn (show tc ++ ": ok")
+        Right _ -> do
+          putStrLn (show tc ++ ": ok")
+          return True
         Left err -> do
           putStrLn (show tc ++ ": failed; " ++ err)
-          exitFailure)
+          return False)
 
 runTest :: TestCase -> Options -> IO (Either String ())
 runTest ClientStreaming = runClientStreamingTest
