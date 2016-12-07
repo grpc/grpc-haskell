@@ -198,6 +198,14 @@ newChannel :: Options -> IO Channel
 newChannel opts =
   createInsecureChannel (C8.pack (optServerHost opts)) (optServerPort opts) mempty
 
+seq_ :: [(String, IO (Either String ()))] -> IO (Either String ())
+seq_ [] = return (Right ())
+seq_ ((msg, x):xs) = do
+  v <- x
+  case v of
+    Right _ -> seq_ xs
+    Left desc -> return (Left (msg ++ ": " ++ desc))
+
 -- | This test verifies that implementations support zero-size messages.
 -- Ideally, client implementations would verify that the request and
 -- response were zero bytes serialized, but this is generally prohibitive to
@@ -312,21 +320,20 @@ runLargeUnaryTest opts = do
 --  - metadata with key `"x-grpc-test-echo-trailing-bin"` and value `0xababab` is
 --      received in the trailing metadata for calls in Procedure steps 1 and 2.
 runCustomMetadataTest :: Options -> IO (Either String ())
-runCustomMetadataTest opts = do
-  resp <- procedure1
-  case resp of
-    Left err -> return (Left err)
-    Right () -> procedure2
+runCustomMetadataTest opts =
+  seq_
+    [ ("procedure1", procedure1)
+    , ("procedure2", procedure2)]
   where
     expectedInitMd = Metadata "x-grpc-test-echo-initial" "test_initial_metadata_value" 0
     expectedTrailMd = Metadata "x-grpc-test-echo-trailing-bin" "\x0a\x0b\x0a\x0b\x0a\x0b" 0
     metadata = [ expectedInitMd, expectedTrailMd ]
     callOptions' = callOptions <> withMetadata metadata
 
-    checkMetadata :: String -> [Metadata] -> [Metadata] -> IO (Either String ())
-    checkMetadata desc initMd trailMd
-      | initMd /= [expectedInitMd] = return (Left (desc ++ ": wrong initial metadata, got " ++ show initMd))
-      | trailMd /= [expectedTrailMd] = return (Left (desc ++ ": wrong trailing metadata, got " ++ show trailMd))
+    checkMetadata :: [Metadata] -> [Metadata] -> IO (Either String ())
+    checkMetadata initMd trailMd
+      | initMd /= [expectedInitMd] = return (Left ("wrong initial metadata, got " ++ show initMd))
+      | trailMd /= [expectedTrailMd] = return (Left ("wrong trailing metadata, got " ++ show trailMd))
       | otherwise = return (Right ())
 
     procedure1 :: IO (Either String ())
@@ -341,7 +348,7 @@ runCustomMetadataTest opts = do
           resp <- callUnary ctx callOptions' "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
           case resp of
             RpcOk (UnaryResult initMd trailMd _) ->
-              checkMetadata "procedure1" initMd trailMd
+              checkMetadata initMd trailMd
             RpcError err ->
               return (Left (show err))
 
@@ -364,7 +371,7 @@ runCustomMetadataTest opts = do
             return (initMd, trailMd)
           case mds of
             RpcOk (initMd, trailMd) ->
-              checkMetadata "procedure2" initMd trailMd
+              checkMetadata initMd trailMd
             RpcError err ->
               return (Left (show err))
 
