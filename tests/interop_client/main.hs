@@ -104,16 +104,24 @@ stringToBool "true" = True
 stringToBool "TRUE" = True
 stringToBool _      = False
 
+testCaseMap :: [(String, TestCase)]
+testCaseMap =
+ [ ("client_streaming"        , ClientStreaming)
+ , ("custom_metadata"         , CustomMetadata)
+ , ("empty_stream"            , EmptyStream)
+ , ("empty_unary"             , EmptyUnary)
+ , ("large_unary"             , LargeUnary)
+ , ("status_code_and_message" , StatusCodeAndMessage)
+ , ("unimplemented_method"    , UnimplementedMethod) ]
+
+renderTestCases :: String
+renderTestCases = unlines (map (" - " ++ ) ("all":map fst testCaseMap))
+
 testCase :: String -> TestCaseFlag
-testCase "client_streaming"        = TestCase ClientStreaming
-testCase "custom_metadata"         = TestCase CustomMetadata
-testCase "empty_stream"            = TestCase EmptyStream
-testCase "empty_unary"             = TestCase EmptyUnary
-testCase "large_unary"             = TestCase LargeUnary
-testCase "status_code_and_message" = TestCase StatusCodeAndMessage
-testCase "unimplemented_method"    = TestCase UnimplementedMethod
-testCase "all"                     = AllTests
-testCase unknown                   = TestCaseUnknown unknown
+testCase "all"                        = AllTests
+testCase str
+  | Just tc <- lookup str testCaseMap = TestCase tc
+testCase unknown                      = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
 options =
@@ -129,7 +137,7 @@ options =
       "The server port to connect to. For example, \"8080\""
   , Option [] ["test_case"]
       (ReqArg (\test opts -> opts { optTestCase = testCase test }) "TESTCASE")
-      "The name of the test case to execute. For example, \"empty_unary\"."
+      ("The name of the test case to execute. Test cases;\n" ++ renderTestCases)
   , Option [] ["use_tls"]
       (ReqArg (\tls opts -> opts { optUseTLS = stringToBool tls }) "BOOLEAN")
       "Whether to use a plaintext or encrypted connection"
