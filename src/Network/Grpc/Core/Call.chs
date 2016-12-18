@@ -491,11 +491,6 @@ clientWaitForStatus ClientReaderWriter{..} = do
   status <- readMVar statusFromServer
   return (RpcOk status)
 
-clientClose :: ClientReaderWriter -> IO ()
-clientClose (ClientReaderWriter{..}) = do
-  withMVar callMVar_ $ \call ->
-    grpcCallDestroy call
-
 clientWrite :: ClientReaderWriter -> B.ByteString -> IO (RpcReply ())
 clientWrite crw@(ClientReaderWriter{..}) arg = do
   sendMessageOp <- opSendMessage arg
@@ -513,8 +508,9 @@ clientCloseCall ClientReaderWriter{..} = do
     Nothing -> return ()
     Just eDesc ->
       CQ.releaseEvent (ccWorker context) eDesc
-  withMVar callMVar_ $ \call ->
+  modifyMVar_ callMVar_ $ \call -> do
     grpcCallDestroy call
+    return (error "grpcCallDestroy called on this Call")
 
 type Rpc req resp a = ReaderT (Client req resp) (ExceptT RpcError IO) a
 
@@ -539,7 +535,12 @@ withNewClient r_client m = do
 
 withClient :: Client req resp -> Rpc req resp a -> IO (RpcReply a)
 withClient client m = do
-  e <- runExceptT (runReaderT m client)
+  let m' = do
+        x <- m
+        _ <- waitForStatus
+        throwIfErrorStatus
+        return x
+  e <- runExceptT (runReaderT m' client)
   case e of
     Left err -> return (RpcError err)
     Right a -> return (RpcOk a)
@@ -554,7 +555,6 @@ joinClientRWOp act = do
   x <- clientRWOp act
   joinReply x
 
-
 branchOnStatus :: Rpc req resp a
                -> Rpc req resp a
                -> (StatusCode -> B.ByteString -> Rpc req resp a)
@@ -567,8 +567,8 @@ branchOnStatus onProcessing onSuccess onFail = do
       | code == StatusOk -> onSuccess
       | otherwise -> onFail code msg
 
-abortIfStatus :: Rpc req resp ()
-abortIfStatus =
+throwIfErrorStatus :: Rpc req resp ()
+throwIfErrorStatus =
   branchOnStatus
     (return ())
     (return ())
@@ -620,19 +620,21 @@ receiveAllMessages = do
 
 sendMessage :: req -> Rpc req resp ()
 sendMessage req = do
-  abortIfStatus
+  throwIfErrorStatus
   encoder <- askEncoder
   bs <- joinReply =<< liftIO (encoder req)
   joinClientRWOp (\crw -> clientWrite crw bs)
 
 sendHalfClose :: Rpc req resp ()
 sendHalfClose = do
-  abortIfStatus
+  throwIfErrorStatus
   joinClientRWOp clientSendHalfClose
 
 closeCall :: Rpc req resp ()
-closeCall =
-  clientRWOp clientClose
+closeCall = do
+  _ <- waitForStatus
+  clientRWOp clientCloseCall
+  throwIfErrorStatus
 
 data RpcReply a
   = RpcOk a
