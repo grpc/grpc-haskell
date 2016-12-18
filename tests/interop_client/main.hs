@@ -82,6 +82,7 @@ data TestCase
   | PingPong
   | StatusCodeAndMessage
   | UnimplementedMethod
+  | UnimplementedService
   deriving (Bounded, Enum, Show)
 
 allTests :: [TestCase]
@@ -115,6 +116,7 @@ testCaseMap =
  , ("ping_pong"               , PingPong)
  , ("status_code_and_message" , StatusCodeAndMessage)
  , ("unimplemented_method"    , UnimplementedMethod)
+ , ("unimplemented_service"   , UnimplementedService)
  ]
 
 renderTestCases :: String
@@ -224,6 +226,7 @@ runTest LargeUnary = runLargeUnaryTest
 runTest PingPong = runPingPongTest
 runTest StatusCodeAndMessage = runStatusCodeAndMessageTest
 runTest UnimplementedMethod = runUnimplementedMethodTest
+runTest UnimplementedService = runUnimplementedServiceTest
 
 newChannel :: Options -> IO Channel
 newChannel opts =
@@ -410,13 +413,34 @@ runCustomMetadataTest opts =
 -- status code.
 -- Server features: N/A
 -- Procedure:
---  1. Client calls grpc.testing.UnimplementedService/UnimplementedCall with an empty
---     request (defined as grpc.testing.Empty):
+--  1. Client calls `grpc.testing.TestService/UnimplementedCall` with an empty
+--     request (defined as `grpc.testing.Empty`):
 -- Client asserts:
 --  - received status code is 12 (UNIMPLEMENTED)
 --  - received status message is empty or null/unset
 runUnimplementedMethodTest :: Options -> IO (Either String ())
 runUnimplementedMethodTest opts =
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnimplementedCall" B.empty
+      case resp of
+        RpcError (StatusError StatusUnimplemented "") -> return (Right ())
+        RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
+        RpcOk _ -> return (Left "RPC succeeded, it should have failed.")
+
+-- | This test verifies calling an unimplemented server returns the
+-- UNIMPLEMENTED status code.
+--
+-- Server features: N/A
+--
+-- Procedure:
+-- 1. Client calls `grpc.testing.UnimplementedService/UnimplementedCall` with an
+--    empty request (defined as `grpc.testing.Empty`)
+--
+-- Client asserts:
+-- 1. received status code is 12 (UNIMPLEMENTED)
+runUnimplementedServiceTest :: Options -> IO (Either String ())
+runUnimplementedServiceTest opts =
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx callOptions "/grpc.testing.UnimplementedService/UnimplementedCall" B.empty
