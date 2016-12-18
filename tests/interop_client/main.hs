@@ -30,7 +30,6 @@ module Main where
 
 import           Control.Exception
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Data.Monoid                           ((<>))
 import           System.Console.GetOpt
 import           System.Environment
@@ -130,7 +129,7 @@ options =
       "The server port to connect to. For example, \"8080\""
   , Option [] ["test_case"]
       (ReqArg (\test opts -> opts { optTestCase = testCase test }) "TESTCASE")
-      "The name of the test case to execute. For example, \"empty_unary\""
+      "The name of the test case to execute. For example, \"empty_unary\"."
   , Option [] ["use_tls"]
       (ReqArg (\tls opts -> opts { optUseTLS = stringToBool tls }) "BOOLEAN")
       "Whether to use a plaintext or encrypted connection"
@@ -149,11 +148,21 @@ options =
       ++ "Clients must support TLS with ALPN. Clients must not disable certificate checking.")
   ]
 
-testOptions :: [String] -> Either [String] Options
-testOptions flags =
+parseOptions :: [String] -> Either [String] Options
+parseOptions flags =
   case getOpt Permute options flags of
-    (opts, [], []) -> Right (foldl (flip id) defaultOptions opts)
+    (opts, [], []) ->
+      let opts' = foldl (flip id) defaultOptions opts in
+        case validateOptions opts' of
+            [] -> Right opts'
+            errs -> Left errs
     (_, unkn, err) -> Left (map ("unrecognized argument " ++) unkn ++ err)
+
+validateOptions :: Options -> [String]
+validateOptions opts =
+  [ "Missing flag --server_host=HOSTNAME" | "" <- return (optServerHost opts) ]
+  ++ [ "Missing flag --server_port=PORT" | 0 <- return (optServerPort opts) ]
+  ++ [ "Missing flag --test_case=TESTCASE or invalid test case" | TestCaseUnknown _ <- return (optTestCase opts) ]
 
 callOptions :: CallOptions
 callOptions = withRelativeDeadlineSeconds 2
@@ -161,10 +170,11 @@ callOptions = withRelativeDeadlineSeconds 2
 main :: IO ()
 main = do
   args <- getArgs
-  opts <- case testOptions args of
+  opts <- case parseOptions args of
     Left errs -> do
       putStrLn "Errors while parsing flags:"
       mapM_ putStrLn errs
+      putStrLn ""
       putStrLn (usageInfo "Usage: interop_client [OPTION]" options)
       exitFailure
     Right opts -> return opts
