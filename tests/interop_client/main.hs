@@ -30,6 +30,7 @@ module Main where
 
 import           Control.Exception
 import           Control.Monad
+import           Control.Monad.IO.Class
 import           Data.Monoid                           ((<>))
 import           System.Console.GetOpt
 import           System.Environment
@@ -53,7 +54,8 @@ import           Proto.Src.Proto.Grpc.Testing.Messages (Payload (..),
                                                         SimpleResponse (..),
                                                         StreamingOutputCallRequest (..),
                                                         StreamingInputCallRequest (..),
-                                                        StreamingInputCallResponse (..))
+                                                        StreamingInputCallResponse (..),
+                                                        EchoStatus (..))
 
 data Options = Options
   { optServerHost            :: String
@@ -73,11 +75,12 @@ data TestCaseFlag
   | TestCaseUnknown String
 
 data TestCase
-  = EmptyStream
-  | ClientStreaming
+  = ClientStreaming
+  | CustomMetadata
+  | EmptyStream
   | EmptyUnary
   | LargeUnary
-  | CustomMetadata
+  | StatusCodeAndMessage
   | UnimplementedMethod
   deriving (Bounded, Enum, Show)
 
@@ -103,14 +106,15 @@ stringToBool "TRUE" = True
 stringToBool _      = False
 
 testCase :: String -> TestCaseFlag
-testCase "client_streaming"     = TestCase ClientStreaming
-testCase "empty_stream"         = TestCase EmptyStream
-testCase "empty_unary"          = TestCase EmptyUnary
-testCase "large_unary"          = TestCase LargeUnary
-testCase "custom_metadata"      = TestCase CustomMetadata
-testCase "unimplemented_method" = TestCase UnimplementedMethod
-testCase "all"                  = AllTests
-testCase unknown                = TestCaseUnknown unknown
+testCase "client_streaming"        = TestCase ClientStreaming
+testCase "custom_metadata"         = TestCase CustomMetadata
+testCase "empty_stream"            = TestCase EmptyStream
+testCase "empty_unary"             = TestCase EmptyUnary
+testCase "large_unary"             = TestCase LargeUnary
+testCase "status_code_and_message" = TestCase StatusCodeAndMessage
+testCase "unimplemented_method"    = TestCase UnimplementedMethod
+testCase "all"                     = AllTests
+testCase unknown                   = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
 options =
@@ -196,6 +200,7 @@ runTest CustomMetadata = runCustomMetadataTest
 runTest EmptyStream = runEmptyStreamTest
 runTest EmptyUnary = runEmptyUnaryTest
 runTest LargeUnary = runLargeUnaryTest
+runTest StatusCodeAndMessage = runStatusCodeAndMessageTest
 runTest UnimplementedMethod = runUnimplementedMethodTest
 
 newChannel :: Options -> IO Channel
@@ -454,3 +459,80 @@ runClientStreamingTest opts = do
           return (assertResponse resp')
         RpcError err ->
           return (Left (show err))
+
+
+-- | This test verifies unary calls succeed in sending messages, and propagate
+-- back status code and message sent along with the messages.
+--
+-- Server features:
+-- * [UnaryCall][]
+-- * [FullDuplexCall][]
+-- * [Echo Status][]
+-- Procedure:
+--  1. Client calls UnaryCall with:
+--
+--     ```
+--     {
+--       response_status:{
+--         code: 2
+--         message: "test status message"
+--       }
+--     }
+--     ```
+--
+--  2. Client calls FullDuplexCall with:
+--
+--     ```
+--     {
+--       response_status:{
+--         code: 2
+--         message: "test status message"
+--       }
+--     }
+--     ```
+--
+--     and then half-closes
+-- Client asserts:
+-- * received status code is the same as the sent code for both Procedure steps 1
+--   and 2
+-- * received status message is the same as the sent message for both Procedure
+--   steps 1 and 2
+runStatusCodeAndMessageTest :: Options -> IO (Either String ())
+runStatusCodeAndMessageTest opts =
+  seq_
+    [ ("procedure1", runStatusCodeAndMessageTest1 opts)
+    , ("procedure2", runStatusCodeAndMessageTest2 opts) ]
+
+runStatusCodeAndMessageTest1 :: Options -> IO (Either String ())
+runStatusCodeAndMessageTest1 opts = do
+  let
+    req = def { _SimpleRequest'responseStatus =
+                  Just $ def { _EchoStatus'code = 2
+                             , _EchoStatus'message = "test status message"
+                             }
+              }
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnaryCall" (encodeMessage req)
+      case resp of
+        RpcError (StatusError StatusUnknown "test status message") -> return (Right ())
+        _ -> return (Left ("expected (unknown, \"test status message\"), got= " ++ show resp))
+
+runStatusCodeAndMessageTest2 :: Options -> IO (Either String ())
+runStatusCodeAndMessageTest2 opts = do
+  let
+    req = def { _StreamingOutputCallRequest'responseStatus =
+                  Just $ def { _EchoStatus'code = 2
+                             , _EchoStatus'message = "test status message"
+                             }
+              }
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
+      resp <- withNewClient client $ do
+        sendMessage (encodeMessage req)
+        sendHalfClose
+        closeCall
+      case resp of
+        RpcError (StatusError StatusUnknown "test status message") -> return (Right ())
+        _ -> return (Left ("expected (unknown, \"test status message\"), got= " ++ show resp))
