@@ -79,6 +79,7 @@ data TestCase
   | EmptyStream
   | EmptyUnary
   | LargeUnary
+  | PingPong
   | StatusCodeAndMessage
   | UnimplementedMethod
   deriving (Bounded, Enum, Show)
@@ -111,8 +112,10 @@ testCaseMap =
  , ("empty_stream"            , EmptyStream)
  , ("empty_unary"             , EmptyUnary)
  , ("large_unary"             , LargeUnary)
+ , ("ping_pong"               , PingPong)
  , ("status_code_and_message" , StatusCodeAndMessage)
- , ("unimplemented_method"    , UnimplementedMethod) ]
+ , ("unimplemented_method"    , UnimplementedMethod)
+ ]
 
 renderTestCases :: String
 renderTestCases = unlines (map (" - " ++ ) ("all":map fst testCaseMap))
@@ -218,6 +221,7 @@ runTest CustomMetadata = runCustomMetadataTest
 runTest EmptyStream = runEmptyStreamTest
 runTest EmptyUnary = runEmptyUnaryTest
 runTest LargeUnary = runLargeUnaryTest
+runTest PingPong = runPingPongTest
 runTest StatusCodeAndMessage = runStatusCodeAndMessageTest
 runTest UnimplementedMethod = runUnimplementedMethodTest
 
@@ -554,3 +558,28 @@ runStatusCodeAndMessageTest2 opts = do
       case resp of
         RpcError (StatusError StatusUnknown "test status message") -> return (Right ())
         _ -> return (Left ("expected (unknown, \"test status message\"), got= " ++ show resp))
+
+runPingPongTest :: Options -> IO (Either String ())
+runPingPongTest opts = do
+  let responseSizes = [31415, 9, 2653, 58979]
+      payloadSizes =  [27182, 8, 1828, 45904]
+      req respSize payloadSize =
+        def { _StreamingOutputCallRequest'responseParameters = [ def { _ResponseParameters'size = respSize } ]
+            , _StreamingOutputCallRequest'payload = Just def { _Payload'body = B.replicate payloadSize 0 }
+            }
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
+      mds <- withNewClient client $ do
+        forM_ (zip responseSizes payloadSizes) $ \(respSize, payloadSize) -> do
+          sendMessage (encodeMessage (req respSize payloadSize))
+          _resp <- receiveMessage
+          -- TODO: decode response and verify length of response size field
+          return ()
+        sendHalfClose
+        closeCall
+      case mds of
+        RpcOk () ->
+          return (Right ())
+        RpcError err ->
+          return (Left (show err))
