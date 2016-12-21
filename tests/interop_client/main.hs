@@ -31,6 +31,7 @@ module Main where
 import           Control.Exception
 import           Control.Monad
 import           Data.Monoid                           ((<>))
+import           Data.Either                           (lefts)
 import           System.Console.GetOpt
 import           System.Environment
 import           System.Exit
@@ -54,6 +55,7 @@ import           Proto.Src.Proto.Grpc.Testing.Messages (Payload (..),
                                                         StreamingOutputCallRequest (..),
                                                         StreamingInputCallRequest (..),
                                                         StreamingInputCallResponse (..),
+                                                        StreamingOutputCallResponse (..),
                                                         EchoStatus (..))
 
 data Options = Options
@@ -76,6 +78,7 @@ data TestCaseFlag
 data TestCase
   = CancelAfterBegin
   | ClientStreaming
+  | ServerStreaming
   | CustomMetadata
   | EmptyStream
   | EmptyUnary
@@ -111,6 +114,7 @@ testCaseMap :: [(String, TestCase)]
 testCaseMap =
  [ ("cancel_after_begin"      , CancelAfterBegin)
  , ("client_streaming"        , ClientStreaming)
+ , ("server_streaming"        , ServerStreaming)
  , ("custom_metadata"         , CustomMetadata)
  , ("empty_stream"            , EmptyStream)
  , ("empty_unary"             , EmptyUnary)
@@ -222,6 +226,7 @@ testWrapper tc act =
 runTest :: TestCase -> Options -> IO (Either String ())
 runTest CancelAfterBegin = runCancelAfterBeginTest
 runTest ClientStreaming = runClientStreamingTest
+runTest ServerStreaming = runServerStreamingTest
 runTest CustomMetadata = runCustomMetadataTest
 runTest EmptyStream = runEmptyStreamTest
 runTest EmptyUnary = runEmptyUnaryTest
@@ -242,6 +247,14 @@ seq_ ((msg, x):xs) = do
   case v of
     Right _ -> seq_ xs
     Left desc -> return (Left (msg ++ ": " ++ desc))
+
+mapLeft :: (a -> c) -> Either a b -> Either c b
+mapLeft f (Left x) = Left (f x)
+mapLeft _ (Right x) = Right x
+
+maybeToEither :: e -> Maybe a -> Either e a
+maybeToEither e Nothing = Left e
+maybeToEither _ (Just x) = Right x
 
 -- | This test verifies that implementations support zero-size messages.
 -- Ideally, client implementations would verify that the request and
@@ -586,6 +599,41 @@ runClientStreamingTest opts = do
         RpcError err ->
           return (Left (show err))
 
+runServerStreamingTest :: Options -> IO (Either String ())
+runServerStreamingTest opts = do
+  let
+    responseSizes = [31415, 9, 2653, 58979]
+    req = def { _StreamingOutputCallRequest'responseParameters =
+                  map (\n -> def { _ResponseParameters'size = n }) responseSizes
+              }
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callDownstream ctx callOptions "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req)
+      resps <- withNewClient client $ do
+        msgs <- receiveAllMessages
+        closeCall
+        return msgs
+      case resps of
+        RpcOk resps'
+          | length resps' == length responseSizes ->
+            case errors of
+              [] -> return $ Right ()
+              (err : _) -> return $ Left err
+          | otherwise -> return $ Left ("number of received messages mismatch: " ++ show (length resps'))
+          where
+            assertions = map (\(expectedSize, resp) ->
+              do
+                msg <- mapLeft ("proto decoder says: " ++) $ decodeMessage (L.toStrict resp)
+                payload <- maybeToEither "no payload" (_StreamingOutputCallResponse'payload msg)
+                let
+                  expectedBody = B.replicate (fromIntegral expectedSize) 0
+                if _Payload'body payload == expectedBody
+                  then Right ()
+                  else Left "payload does not match"
+              ) (responseSizes `zip` resps')
+            errors = lefts assertions
+        RpcError err ->
+          return (Left (show err))
 
 -- | This test verifies unary calls succeed in sending messages, and propagate
 -- back status code and message sent along with the messages.
