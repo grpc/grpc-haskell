@@ -30,8 +30,10 @@ module Main where
 
 import           Control.Exception
 import           Control.Monad
+import           Control.Monad.IO.Class                (liftIO)
+import           Control.Concurrent                    (threadDelay)
 import           Data.Monoid                           ((<>))
-import           Data.Either                           (lefts)
+import           Data.Either                           (either, lefts)
 import           System.Console.GetOpt
 import           System.Environment
 import           System.Exit
@@ -79,6 +81,7 @@ data TestCase
   = CancelAfterBegin
   | ClientStreaming
   | ServerStreaming
+  | ServerStreamingWithSlowConsumer
   | CustomMetadata
   | EmptyStream
   | EmptyUnary
@@ -88,9 +91,6 @@ data TestCase
   | UnimplementedMethod
   | UnimplementedService
   deriving (Bounded, Enum, Show)
-
-allTests :: [TestCase]
-allTests = [ minBound .. maxBound ]
 
 defaultOptions :: Options
 defaultOptions = Options
@@ -110,29 +110,33 @@ stringToBool "true" = True
 stringToBool "TRUE" = True
 stringToBool _      = False
 
-testCaseMap :: [(String, TestCase)]
+testCaseMap :: [(String, (Bool, TestCase))]
 testCaseMap =
- [ ("cancel_after_begin"      , CancelAfterBegin)
- , ("client_streaming"        , ClientStreaming)
- , ("server_streaming"        , ServerStreaming)
- , ("custom_metadata"         , CustomMetadata)
- , ("empty_stream"            , EmptyStream)
- , ("empty_unary"             , EmptyUnary)
- , ("large_unary"             , LargeUnary)
- , ("ping_pong"               , PingPong)
- , ("status_code_and_message" , StatusCodeAndMessage)
- , ("unimplemented_method"    , UnimplementedMethod)
- , ("unimplemented_service"   , UnimplementedService)
+ [ ("cancel_after_begin"      , (True,  CancelAfterBegin))
+ , ("client_streaming"        , (True,  ClientStreaming))
+ , ("server_streaming"        , (True,  ServerStreaming))
+ , ("slow_consumer"           , (False, ServerStreamingWithSlowConsumer))
+ , ("custom_metadata"         , (True,  CustomMetadata))
+ , ("empty_stream"            , (True,  EmptyStream))
+ , ("empty_unary"             , (True,  EmptyUnary))
+ , ("large_unary"             , (True,  LargeUnary))
+ , ("ping_pong"               , (True,  PingPong))
+ , ("status_code_and_message" , (True,  StatusCodeAndMessage))
+ , ("unimplemented_method"    , (True,  UnimplementedMethod))
+ , ("unimplemented_service"   , (True,  UnimplementedService))
  ]
+
+allTests :: [TestCase]
+allTests = map (snd . snd) (filter (fst . snd) testCaseMap)
 
 renderTestCases :: String
 renderTestCases = unlines (map (" - " ++ ) ("all":map fst testCaseMap))
 
 testCase :: String -> TestCaseFlag
-testCase "all"                        = AllTests
+testCase "all"                             = AllTests
 testCase str
-  | Just tc <- lookup str testCaseMap = TestCase tc
-testCase unknown                      = TestCaseUnknown unknown
+  | Just (_, tc) <- lookup str testCaseMap = TestCase tc
+testCase unknown                           = TestCaseUnknown unknown
 
 options :: [OptDescr (Options -> Options)]
 options =
@@ -227,6 +231,7 @@ runTest :: TestCase -> Options -> IO (Either String ())
 runTest CancelAfterBegin = runCancelAfterBeginTest
 runTest ClientStreaming = runClientStreamingTest
 runTest ServerStreaming = runServerStreamingTest
+runTest ServerStreamingWithSlowConsumer = runServerStreamingWithSlowConsumerTest
 runTest CustomMetadata = runCustomMetadataTest
 runTest EmptyStream = runEmptyStreamTest
 runTest EmptyUnary = runEmptyUnaryTest
@@ -632,6 +637,47 @@ runServerStreamingTest opts = do
                   else Left "payload does not match"
               ) (responseSizes `zip` resps')
             errors = lefts assertions
+        RpcError err ->
+          return (Left (show err))
+
+runServerStreamingWithSlowConsumerTest :: Options -> IO (Either String ())
+runServerStreamingWithSlowConsumerTest opts = do
+  let
+    responseSize = 1030
+    responsesCount = 2000
+    delaySeconds = 20
+    delay = delaySeconds * 1000
+    req = def { _StreamingOutputCallRequest'responseParameters =
+                  replicate responsesCount def { _ResponseParameters'size = responseSize }
+              }
+    expectedBody = B.replicate (fromIntegral responseSize) 0
+    go acc = do
+      maybeResponse <- receiveMessage
+      case maybeResponse of
+        Nothing -> return $ Right (reverse acc)
+        Just resp ->
+          let
+            eitherMsg = do
+              msg <- mapLeft ("proto decoder says: " ++) $ decodeMessage (L.toStrict resp)
+              payload <- maybeToEither "no payload" (_StreamingOutputCallResponse'payload msg)
+              if _Payload'body payload == expectedBody
+                then Right msg
+                else Left "payload does not match"
+          in either (return . Left) (\msg -> liftIO (threadDelay delay) >> go (msg : acc)) eitherMsg
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callDownstream ctx mempty "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req)
+      resp <- withNewClient client $ do
+        msgs <- go []
+        closeCall
+        return msgs
+      case resp of
+        RpcOk result ->
+          case result of
+            Right msgs
+              | length msgs == responsesCount -> return $ Right ()
+              | otherwise -> return $ Left ("responses count does not match: " ++ show (length msgs))
+            Left err -> return $ Left err
         RpcError err ->
           return (Left (show err))
 
