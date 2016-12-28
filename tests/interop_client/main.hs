@@ -74,7 +74,8 @@ data TestCaseFlag
   | TestCaseUnknown String
 
 data TestCase
-  = ClientStreaming
+  = CancelAfterBegin
+  | ClientStreaming
   | CustomMetadata
   | EmptyStream
   | EmptyUnary
@@ -108,7 +109,8 @@ stringToBool _      = False
 
 testCaseMap :: [(String, TestCase)]
 testCaseMap =
- [ ("client_streaming"        , ClientStreaming)
+ [ ("cancel_after_begin"      , CancelAfterBegin)
+ , ("client_streaming"        , ClientStreaming)
  , ("custom_metadata"         , CustomMetadata)
  , ("empty_stream"            , EmptyStream)
  , ("empty_unary"             , EmptyUnary)
@@ -218,6 +220,7 @@ testWrapper tc act =
           return False)
 
 runTest :: TestCase -> Options -> IO (Either String ())
+runTest CancelAfterBegin = runCancelAfterBeginTest
 runTest ClientStreaming = runClientStreamingTest
 runTest CustomMetadata = runCustomMetadataTest
 runTest EmptyStream = runEmptyStreamTest
@@ -448,6 +451,20 @@ runUnimplementedServiceTest opts =
         RpcError (StatusError StatusUnimplemented "") -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
         RpcOk _ -> return (Left "RPC succeeded, it should have failed.")
+
+runCancelAfterBeginTest :: Options -> IO (Either String ())
+runCancelAfterBeginTest opts =
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall"
+      resp <- withNewClient client $ do
+        cancelCall
+        closeCall
+      case resp of
+        RpcError (StatusError StatusCancelled "Cancelled") ->
+          return (Right ())
+        resp' ->
+          return (Left ("Wanted StatusCancelled, got=" ++ show resp'))
 
 -- |This test verifies that streams support having zero-messages in both
 -- directions.
