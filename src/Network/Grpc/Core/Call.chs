@@ -652,6 +652,8 @@ closeCall = do
   clientRWOp clientCloseCall
   throwIfErrorStatus
 
+-- | Called by clients to cancel an RPC on the server.
+-- Can be called multiple times, from any thread.
 cancelCall :: Rpc req resp ()
 cancelCall =
   branchOnStatus
@@ -659,6 +661,12 @@ cancelCall =
     (return ())
     (\code msg -> lift (throwE (StatusError code msg)))
 
+-- | Called by clients to cancel an RPC on the server.
+-- Can be called multiple times, from any thread.
+-- If a status has not been received for the call, set it to the status code
+-- and description passed in.
+-- Importantly, this function does not send status nor description to the
+-- remote endpoint.
 cancelCallWithStatus :: StatusCode -> B.ByteString -> Rpc req resp ()
 cancelCallWithStatus status details =
   branchOnStatus

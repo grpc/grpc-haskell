@@ -420,14 +420,13 @@ runCustomMetadataTest opts =
 --     request (defined as `grpc.testing.Empty`):
 -- Client asserts:
 --  - received status code is 12 (UNIMPLEMENTED)
---  - received status message is empty or null/unset
 runUnimplementedMethodTest :: Options -> IO (Either String ())
 runUnimplementedMethodTest opts =
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx callOptions "/grpc.testing.TestService/UnimplementedCall" B.empty
       case resp of
-        RpcError (StatusError StatusUnimplemented "") -> return (Right ())
+        RpcError (StatusError StatusUnimplemented _) -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
         RpcOk _ -> return (Left "RPC succeeded, it should have failed.")
 
@@ -448,10 +447,22 @@ runUnimplementedServiceTest opts =
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- callUnary ctx callOptions "/grpc.testing.UnimplementedService/UnimplementedCall" B.empty
       case resp of
-        RpcError (StatusError StatusUnimplemented "") -> return (Right ())
+        RpcError (StatusError StatusUnimplemented _) -> return (Right ())
         RpcError err -> return (Left ("RPC failed with the wrong error, got " ++ show err))
         RpcOk _ -> return (Left "RPC succeeded, it should have failed.")
 
+-- | This test verifies that a request can be cancelled after metadata
+-- has been sent but before payloads are sent.
+--
+-- Server features:
+--  1. [StreamingInputCall][]
+--
+-- Procedure:
+--  1. Client starts StreamingInputCall
+--  2. Client immediately cancels request
+--
+-- Client asserts:
+--  - Call completed with status CANCELLED
 runCancelAfterBeginTest :: Options -> IO (Either String ())
 runCancelAfterBeginTest opts =
   bracket (newChannel opts) destroyChannel $ \channel ->
@@ -461,7 +472,7 @@ runCancelAfterBeginTest opts =
         cancelCall
         closeCall
       case resp of
-        RpcError (StatusError StatusCancelled "Cancelled") ->
+        RpcError (StatusError StatusCancelled _) ->
           return (Right ())
         resp' ->
           return (Left ("Wanted StatusCancelled, got=" ++ show resp'))
@@ -492,19 +503,68 @@ runEmptyStreamTest opts =
         RpcError err ->
           return (Left (show err))
 
+
+-- | This test verifies that client-only streaming succeeds.
+--
+-- Server features:
+--  1. [StreamingInputCall][]
+--
+-- Procedure:
+--  1. Client calls StreamingInputCall
+--  2. Client sends:
+--
+--     ```
+--     {
+--       payload:{
+--         body: 27182 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  3. Client then sends:
+--
+--     ```
+--     {
+--       payload:{
+--         body: 8 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  4. Client then sends:
+--
+--     ```
+--     {
+--       payload:{
+--         body: 1828 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  5. Client then sends:
+--
+--     ```
+--     {
+--       payload:{
+--         body: 45904 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  6. Client half-closes
+--
+-- Client asserts:
+--  - call was successful
+--  - response aggregated_payload_size is 74922
 runClientStreamingTest :: Options -> IO (Either String ())
 runClientStreamingTest opts = do
   let
     requestSizes = [27182, 8, 1828, 45904]
     expectedResponseSize = 74922
+    aggPayloadSize = _StreamingInputCallResponse'aggregatedPayloadSize
     req n =
       def { _StreamingInputCallRequest'payload = Just def { _Payload'body = B.replicate n 0 }
           }
-    assertResponse resp
-      | respSize == expectedResponseSize = Right ()
-      | otherwise = Left ("aggregated_payload_size=" ++ show respSize ++ ", expected " ++ show expectedResponseSize)
-      where
-       respSize = _StreamingInputCallResponse'aggregatedPayloadSize resp
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       client <- callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall"
@@ -518,8 +578,11 @@ runClientStreamingTest opts = do
           Right msg' -> return msg'
           Left err -> fail err
       case resp of
-        RpcOk resp' ->
-          return (assertResponse resp')
+        RpcOk resp'
+          | aggPayloadSize resp' == expectedResponseSize ->
+              return (Right ())
+          | otherwise ->
+              return (Left ("aggregated_payload_size=" ++ show (aggPayloadSize resp') ++ ", expected " ++ show expectedResponseSize))
         RpcError err ->
           return (Left (show err))
 
@@ -600,6 +663,72 @@ runStatusCodeAndMessageTest2 opts = do
         RpcError (StatusError StatusUnknown "test status message") -> return (Right ())
         _ -> return (Left ("expected (unknown, \"test status message\"), got= " ++ show resp))
 
+-- | This test verifies that full duplex bidi is supported.
+--
+-- Server features:
+--  1. [FullDuplexCall][]
+--
+-- Procedure:
+--  1. Client calls FullDuplexCall with:
+--
+--     ```
+--     {
+--       response_parameters:{
+--         size: 31415
+--       }
+--       payload:{
+--         body: 27182 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  2. After getting a reply, it sends:
+--
+--     ```
+--     {
+--       response_parameters:{
+--         size: 9
+--       }
+--       payload:{
+--         body: 8 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  3. After getting a reply, it sends:
+--
+--     ```
+--     {
+--       response_parameters:{
+--         size: 2653
+--       }
+--       payload:{
+--         body: 1828 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  4. After getting a reply, it sends:
+--
+--     ```
+--     {
+--       response_parameters:{
+--         size: 58979
+--       }
+--       payload:{
+--         body: 45904 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  5. After getting a reply, client half-closes
+--
+-- Client asserts:
+--  - call was successful
+--  - exactly four responses
+--  - response payload bodies are sized (in order): 31415, 9, 2653, 58979
+--  - clients are free to assert that the response payload body contents are zero
+--     and comparing the entire response messages against golden responses
 runPingPongTest :: Options -> IO (Either String ())
 runPingPongTest opts = do
   let responseSizes = [31415, 9, 2653, 58979]
@@ -618,6 +747,7 @@ runPingPongTest opts = do
           -- TODO: decode response and verify length of response size field
           return ()
         sendHalfClose
+        Nothing <- receiveMessage
         closeCall
       case mds of
         RpcOk () ->
