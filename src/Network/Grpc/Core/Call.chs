@@ -520,6 +520,14 @@ clientCancelCall ClientReaderWriter{..} = do
     CallOk -> return (RpcOk ())
     _ -> return (RpcError (CallErrorStatus err))
 
+clientCancelCallWithStatus :: ClientReaderWriter -> StatusCode -> B.ByteString -> IO (RpcReply ())
+clientCancelCallWithStatus ClientReaderWriter{..} status details = do
+  err <- withMVar callMVar_ $ \call -> do
+    grpcCallCancelWithStatus call status details reservedPtr
+  case err of
+    CallOk -> return (RpcOk ())
+    _ -> return (RpcError (CallErrorStatus err))
+
 type Rpc req resp a = ReaderT (Client req resp) (ExceptT RpcError IO) a
 
 askCrw :: Rpc req resp ClientReaderWriter
@@ -648,6 +656,13 @@ cancelCall :: Rpc req resp ()
 cancelCall =
   branchOnStatus
     (joinClientRWOp clientCancelCall)
+    (return ())
+    (\code msg -> lift (throwE (StatusError code msg)))
+
+cancelCallWithStatus :: StatusCode -> B.ByteString -> Rpc req resp ()
+cancelCallWithStatus status details =
+  branchOnStatus
+    (joinClientRWOp (\crw -> clientCancelCallWithStatus crw status details))
     (return ())
     (\code msg -> lift (throwE (StatusError code msg)))
 

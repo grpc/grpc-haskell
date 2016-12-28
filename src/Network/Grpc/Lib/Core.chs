@@ -264,7 +264,7 @@ fromCallError = fromIntegral . fromEnum
   { `Call',
     id `Ptr ()' } -> `CallError' #}
 
-{#fun unsafe grpc_call_cancel_with_status as ^
+{#fun unsafe grpc_call_cancel_with_status as grpcCallCancelWithStatus
   { `Call'
   , `StatusCode'
   , useAsCString* `ByteString'
