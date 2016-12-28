@@ -512,6 +512,14 @@ clientCloseCall ClientReaderWriter{..} = do
     grpcCallDestroy call
     return (error "grpcCallDestroy called on this Call")
 
+clientCancelCall :: ClientReaderWriter -> IO (RpcReply ())
+clientCancelCall ClientReaderWriter{..} = do
+  err <- withMVar callMVar_ $ \call -> do
+    grpcCallCancel call reservedPtr
+  case err of
+    CallOk -> return (RpcOk ())
+    _ -> return (RpcError (CallErrorStatus err))
+
 type Rpc req resp a = ReaderT (Client req resp) (ExceptT RpcError IO) a
 
 askCrw :: Rpc req resp ClientReaderWriter
@@ -635,6 +643,13 @@ closeCall = do
   _ <- waitForStatus
   clientRWOp clientCloseCall
   throwIfErrorStatus
+
+cancelCall :: Rpc req resp ()
+cancelCall =
+  branchOnStatus
+    (joinClientRWOp clientCancelCall)
+    (return ())
+    (\code msg -> lift (throwE (StatusError code msg)))
 
 data RpcReply a
   = RpcOk a

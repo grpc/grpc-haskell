@@ -260,7 +260,7 @@ fromCallError = fromIntegral . fromEnum
 {#fun unsafe grpc_call_start_batch as ^
   {`Call', `GrpcOpPtr', `CULong', `Ptr ()', `Ptr ()'} -> `CallError' toCallError#}
 
-{#fun unsafe grpc_call_cancel as ^
+{#fun unsafe grpc_call_cancel as grpcCallCancel
   { `Call',
     id `Ptr ()' } -> `CallError' #}
 
