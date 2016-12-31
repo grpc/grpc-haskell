@@ -88,6 +88,7 @@ data TestCase
   | LargeUnary
   | PingPong
   | StatusCodeAndMessage
+  | TimeoutOnSleepingServer
   | UnimplementedMethod
   | UnimplementedService
   deriving (Bounded, Enum, Show)
@@ -112,18 +113,19 @@ stringToBool _      = False
 
 testCaseMap :: [(String, (Bool, TestCase))]
 testCaseMap =
- [ ("cancel_after_begin"      , (True,  CancelAfterBegin))
- , ("client_streaming"        , (True,  ClientStreaming))
- , ("server_streaming"        , (True,  ServerStreaming))
- , ("slow_consumer"           , (False, ServerStreamingWithSlowConsumer))
- , ("custom_metadata"         , (True,  CustomMetadata))
- , ("empty_stream"            , (True,  EmptyStream))
- , ("empty_unary"             , (True,  EmptyUnary))
- , ("large_unary"             , (True,  LargeUnary))
- , ("ping_pong"               , (True,  PingPong))
- , ("status_code_and_message" , (True,  StatusCodeAndMessage))
- , ("unimplemented_method"    , (True,  UnimplementedMethod))
- , ("unimplemented_service"   , (True,  UnimplementedService))
+ [ ("cancel_after_begin"        , (True,  CancelAfterBegin))
+ , ("client_streaming"          , (True,  ClientStreaming))
+ , ("server_streaming"          , (True,  ServerStreaming))
+ , ("slow_consumer"             , (False, ServerStreamingWithSlowConsumer))
+ , ("custom_metadata"           , (True,  CustomMetadata))
+ , ("empty_stream"              , (True,  EmptyStream))
+ , ("empty_unary"               , (True,  EmptyUnary))
+ , ("large_unary"               , (True,  LargeUnary))
+ , ("ping_pong"                 , (True,  PingPong))
+ , ("status_code_and_message"   , (True,  StatusCodeAndMessage))
+ , ("timeout_on_sleeping_server", (True,  TimeoutOnSleepingServer))
+ , ("unimplemented_method"      , (True,  UnimplementedMethod))
+ , ("unimplemented_service"     , (True,  UnimplementedService))
  ]
 
 allTests :: [TestCase]
@@ -238,6 +240,7 @@ runTest EmptyUnary = runEmptyUnaryTest
 runTest LargeUnary = runLargeUnaryTest
 runTest PingPong = runPingPongTest
 runTest StatusCodeAndMessage = runStatusCodeAndMessageTest
+runTest TimeoutOnSleepingServer = runTimeoutOnSleepingServerTest
 runTest UnimplementedMethod = runUnimplementedMethodTest
 runTest UnimplementedService = runUnimplementedServiceTest
 
@@ -494,6 +497,48 @@ runCancelAfterBeginTest opts =
         resp' ->
           return (Left ("Wanted StatusCancelled, got=" ++ show resp'))
 
+-- | This test verifies that an RPC request whose lifetime exceeds its configured
+-- timeout value will end with the DeadlineExceeded status.
+--
+-- Server features:
+-- * [FullDuplexCall][]
+--
+-- Procedure:
+--  1. Client calls FullDuplexCall with the following request and sets its timeout
+--     to 1ms
+--
+--     ```
+--     {
+--       payload:{
+--         body: 27182 bytes of zeros
+--       }
+--     }
+--     ```
+--
+--  2. Client waits
+--
+-- Client asserts:
+--  - Call completed with status DEADLINE_EXCEEDED.
+runTimeoutOnSleepingServerTest :: Options -> IO (Either String ())
+runTimeoutOnSleepingServerTest opts = do
+  let
+    callOptions' = callOptions <> withRelativeDeadlineMillis 1
+    req = def { _StreamingOutputCallRequest'payload =
+                  Just def { _Payload'body = B.replicate 27182 0 }
+              }
+  bracket (newChannel opts) destroyChannel $ \channel ->
+    bracket (newClientContext channel) destroyClientContext $ \ctx -> do
+      client <- callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall"
+      resp <- withNewClient client $ do
+        sendMessage (encodeMessage req)
+        _ <- waitForStatus
+        closeCall
+      case resp of
+        RpcError (StatusError StatusDeadlineExceeded _) ->
+          return (Right ())
+        RpcError err ->
+          return (Left ("got error=" ++ show err ++ ", want=StatusDeadlineExceeded"))
+        RpcOk () -> return (Left "got status=OK, want=StatusDeadlineExceeded")
 -- |This test verifies that streams support having zero-messages in both
 -- directions.
 -- Server features:
