@@ -31,8 +31,8 @@
 
 void hs_gpr_now(gpr_timespec *result);
 void hs_gpr_timespec_free(gpr_timespec *timespec);
-gpr_timespec *hs_gpr_time_from_seconds(long x, gpr_timespec *result);
-gpr_timespec *hs_gpr_time_from_millis(long x, gpr_timespec *result);
+gpr_timespec *hs_gpr_time_from_seconds(int64_t x, gpr_timespec *result);
+gpr_timespec *hs_gpr_time_from_millis(int64_t x, gpr_timespec *result);
 gpr_timespec *hs_gpr_time_add(gpr_timespec *a, gpr_timespec *b, gpr_timespec *result);
 
 void hs_gpr_inf_future(gpr_timespec *result);
