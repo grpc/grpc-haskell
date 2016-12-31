@@ -33,7 +33,7 @@ import           Control.Monad
 import           Control.Monad.IO.Class                (liftIO)
 import           Control.Concurrent                    (threadDelay)
 import           Data.Monoid                           ((<>))
-import           Data.Either                           (either, lefts)
+import           Data.Either                           (either)
 import           System.Console.GetOpt
 import           System.Environment
 import           System.Exit
@@ -127,7 +127,7 @@ testCaseMap =
  ]
 
 allTests :: [TestCase]
-allTests = map (snd . snd) (filter (fst . snd) testCaseMap)
+allTests = [ tc | (_, (True, tc)) <- testCaseMap ]
 
 renderTestCases :: String
 renderTestCases = unlines (map (" - " ++ ) ("all":map fst testCaseMap))
@@ -254,8 +254,7 @@ seq_ ((msg, x):xs) = do
     Left desc -> return (Left (msg ++ ": " ++ desc))
 
 mapLeft :: (a -> c) -> Either a b -> Either c b
-mapLeft f (Left x) = Left (f x)
-mapLeft _ (Right x) = Right x
+mapLeft left = either (Left . left) Right
 
 maybeToEither :: e -> Maybe a -> Either e a
 maybeToEither e Nothing = Left e
@@ -620,23 +619,16 @@ runServerStreamingTest opts = do
         return msgs
       case resps of
         RpcOk resps'
-          | length resps' == length responseSizes ->
-            case errors of
-              [] -> return $ Right ()
-              (err : _) -> return $ Left err
-          | otherwise -> return $ Left ("number of received messages mismatch: " ++ show (length resps'))
-          where
-            assertions = map (\(expectedSize, resp) ->
-              do
-                msg <- mapLeft ("proto decoder says: " ++) $ decodeMessage (L.toStrict resp)
-                payload <- maybeToEither "no payload" (_StreamingOutputCallResponse'payload msg)
-                let
-                  expectedBody = B.replicate (fromIntegral expectedSize) 0
-                if _Payload'body payload == expectedBody
-                  then Right ()
-                  else Left "payload does not match"
-              ) (responseSizes `zip` resps')
-            errors = lefts assertions
+          | length resps' /= length responseSizes ->
+            return $ Left ("number of received messages mismatch: " ++ show (length resps'))
+          | otherwise -> return $
+            forM_ (responseSizes `zip` resps') $ \(expectedSize, resp) -> do
+              msg <- mapLeft ("proto decoder says: " ++) (decodeMessage (L.toStrict resp))
+              payload <- maybeToEither "no payload" (_StreamingOutputCallResponse'payload msg)
+              let
+                expectedBody = B.replicate (fromIntegral expectedSize) 0
+              unless (_Payload'body payload == expectedBody) $
+                Left "payload does not match"
         RpcError err ->
           return (Left (show err))
 
@@ -655,15 +647,20 @@ runServerStreamingWithSlowConsumerTest opts = do
       maybeResponse <- receiveMessage
       case maybeResponse of
         Nothing -> return $ Right (reverse acc)
-        Just resp ->
+        Just resp -> do
           let
             eitherMsg = do
               msg <- mapLeft ("proto decoder says: " ++) $ decodeMessage (L.toStrict resp)
               payload <- maybeToEither "no payload" (_StreamingOutputCallResponse'payload msg)
-              if _Payload'body payload == expectedBody
-                then Right msg
-                else Left "payload does not match"
-          in either (return . Left) (\msg -> liftIO (threadDelay delay) >> go (msg : acc)) eitherMsg
+              unless (_Payload'body payload == expectedBody) $
+                Left "payload does not match"
+              return msg
+          case eitherMsg of
+            Left err ->
+              return (Left err)
+            Right msg -> do
+              liftIO (threadDelay delay)
+              go (msg : acc)
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       client <- callDownstream ctx mempty "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req)
@@ -672,12 +669,13 @@ runServerStreamingWithSlowConsumerTest opts = do
         closeCall
         return msgs
       case resp of
-        RpcOk result ->
-          case result of
-            Right msgs
-              | length msgs == responsesCount -> return $ Right ()
-              | otherwise -> return $ Left ("responses count does not match: " ++ show (length msgs))
-            Left err -> return $ Left err
+        RpcOk (Right msgs)
+          | length msgs == responsesCount ->
+            return (Right ())
+          | otherwise ->
+            return (Left ("responses count does not match: " ++ show (length msgs)))
+        RpcOk (Left err) ->
+          return (Left err)
         RpcError err ->
           return (Left (show err))
 
