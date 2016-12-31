@@ -65,7 +65,7 @@ import Network.Grpc.Lib.PropagationBits
 
 data Deadline
   = AbsoluteDeadline TimeSpec
-  | RelativeDeadline Int --seconds
+  | RelativeDeadline Int -- milliseconds
 
 data ClientContext = ClientContext
   { ccChannel :: Channel
@@ -95,7 +95,11 @@ withAbsoluteDeadline deadline =
 
 withRelativeDeadlineSeconds :: Int -> CallOptions
 withRelativeDeadlineSeconds seconds =
-  mempty { coDeadline = Just (RelativeDeadline seconds) }
+  mempty { coDeadline = Just (RelativeDeadline (seconds*1000)) }
+
+withRelativeDeadlineMillis :: Int -> CallOptions
+withRelativeDeadlineMillis ms =
+  mempty { coDeadline = Just (RelativeDeadline ms) }
 
 withParentContext :: () -> CallOptions
 withParentContext ctx =
@@ -115,8 +119,8 @@ resolveDeadline co =
   case coDeadline co of
     Nothing -> return gprInfFuture
     Just (AbsoluteDeadline deadline) -> return deadline
-    Just (RelativeDeadline seconds) ->
-      secondsFromNow (fromIntegral seconds)
+    Just (RelativeDeadline ms) ->
+      millisFromNow (fromIntegral ms)
 
 newClientContext :: Channel -> IO ClientContext
 newClientContext chan = do

@@ -39,8 +39,14 @@ void hs_gpr_timespec_free(gpr_timespec *timespec) {
 	free(timespec);
 }
 
-gpr_timespec *hs_gpr_time_from_seconds(long x, gpr_timespec *result) {
+gpr_timespec *hs_gpr_time_from_seconds(int64_t x, gpr_timespec *result) {
     gpr_timespec t = gpr_time_from_seconds(x, GPR_TIMESPAN);
+    memcpy(result, &t, sizeof(gpr_timespec));
+    return result;
+}
+
+gpr_timespec *hs_gpr_time_from_millis(int64_t x, gpr_timespec *result) {
+    gpr_timespec t = gpr_time_from_millis(x, GPR_TIMESPAN);
     memcpy(result, &t, sizeof(gpr_timespec));
     return result;
 }

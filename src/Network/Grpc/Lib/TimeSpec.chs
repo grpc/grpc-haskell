@@ -61,6 +61,10 @@ instance Storable TimeSpec where
   { `Int64'
   , alloca- `TimeSpec'} -> `TimeSpec' peek* #}
 
+{#fun pure unsafe hs_gpr_time_from_millis as ^
+  { `Int64'
+  , alloca- `TimeSpec'} -> `TimeSpec' peek* #}
+
 {#fun pure unsafe hs_gpr_time_add as ^
   { with* `TimeSpec'
   , with* `TimeSpec'
@@ -73,6 +77,11 @@ secondsFromNow :: Int64 -> IO TimeSpec
 secondsFromNow n = do
   now <- gprNow
   return $! now `hsGprTimeAdd` (hsGprTimeFromSeconds n)
+
+millisFromNow :: Int64 -> IO TimeSpec
+millisFromNow n = do
+  now <- gprNow
+  return $! now `hsGprTimeAdd` (hsGprTimeFromMillis n)
 
 gprInfFuture :: TimeSpec
 gprInfFuture = unsafePerformIO hsGprInfFuture
