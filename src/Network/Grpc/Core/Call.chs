@@ -538,12 +538,7 @@ joinReply (RpcError err) = throwE err
 
 runRpc :: Rpc a -> IO (RpcReply a)
 runRpc m = do
-  let m' = do
-        x <- m
-        -- _ <- waitForStatus
-        -- throwIfErrorStatus
-        return x
-  e <- runExceptT m'
+  e <- runExceptT m
   case e of
     Left err -> return (RpcError err)
     Right a -> return (RpcOk a)
