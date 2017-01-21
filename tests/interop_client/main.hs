@@ -417,14 +417,14 @@ runCustomMetadataTest opts =
                   }
       bracket (newChannel opts) destroyChannel $ \channel ->
         bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-          client <- callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall"
-          mds <- withNewClient client $ do
-            sendMessage (encodeMessage req)
-            sendHalfClose
-            _ <- receiveMessage
-            initMd <- initialMetadata
-            (RpcStatus trailMd _ _) <- waitForStatus
-            closeCall
+          mds <- runRpc $ do
+            RpcOk client <- liftIO (callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall")
+            sendMessage client (encodeMessage req)
+            sendHalfClose client
+            _ <- receiveMessage client
+            initMd <- initialMetadata client
+            (RpcStatus trailMd _ _) <- waitForStatus client
+            closeCall client
             return (initMd, trailMd)
           case mds of
             RpcOk (initMd, trailMd) ->
@@ -487,10 +487,10 @@ runCancelAfterBeginTest :: Options -> IO (Either String ())
 runCancelAfterBeginTest opts =
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall"
-      resp <- withNewClient client $ do
-        cancelCall
-        closeCall
+      resp <- runRpc $ do
+        RpcOk client <- liftIO (callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall")
+        cancelCall client
+        closeCall client
       case resp of
         RpcError (StatusError StatusCancelled _) ->
           return (Right ())
@@ -528,11 +528,11 @@ runTimeoutOnSleepingServerTest opts = do
               }
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall"
-      resp <- withNewClient client $ do
-        sendMessage (encodeMessage req)
-        _ <- waitForStatus
-        closeCall
+      resp <- runRpc $ do
+        RpcOk client <- liftIO (callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall")
+        sendMessage client (encodeMessage req)
+        _ <- waitForStatus client
+        closeCall client
       case resp of
         RpcError (StatusError StatusDeadlineExceeded _) ->
           return (Right ())
@@ -552,11 +552,11 @@ runEmptyStreamTest :: Options -> IO (Either String ())
 runEmptyStreamTest opts =
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
-      resp <- withNewClient client $ do
-        sendHalfClose
-        msgs <- receiveAllMessages
-        closeCall
+      resp <- runRpc $ do
+        RpcOk client <- liftIO (callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall")
+        sendHalfClose client
+        msgs <- receiveAllMessages client
+        closeCall client
         return msgs
       case resp of
         RpcOk msgs
@@ -629,13 +629,13 @@ runClientStreamingTest opts = do
           }
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall"
-      resp <- withNewClient client $ do
+      resp <- runRpc $ do
+        RpcOk client <- liftIO (callUpstream ctx callOptions "/grpc.testing.TestService/StreamingInputCall")
         forM_ requestSizes $ \n ->
-          sendMessage (encodeMessage (req n))
-        sendHalfClose
-        msg <- receiveMessage
-        closeCall
+          sendMessage client (encodeMessage (req n))
+        sendHalfClose client
+        msg <- receiveMessage client
+        closeCall client
         case maybe (Left "no message") (decodeMessage . L.toStrict) msg of
           Right msg' -> return msg'
           Left err -> fail err
@@ -657,10 +657,10 @@ runServerStreamingTest opts = do
               }
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callDownstream ctx callOptions "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req)
-      resps <- withNewClient client $ do
-        msgs <- receiveAllMessages
-        closeCall
+      resps <- runRpc $ do
+        RpcOk client <- liftIO (callDownstream ctx callOptions "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req))
+        msgs <- receiveAllMessages client
+        closeCall client
         return msgs
       case resps of
         RpcOk resps'
@@ -688,8 +688,8 @@ runServerStreamingWithSlowConsumerTest opts = do
                   replicate responsesCount def { _ResponseParameters'size = responseSize }
               }
     expectedBody = B.replicate (fromIntegral responseSize) 0
-    go acc = do
-      maybeResponse <- receiveMessage
+    go client acc = do
+      maybeResponse <- receiveMessage client
       case maybeResponse of
         Nothing -> return $ Right (reverse acc)
         Just resp -> do
@@ -705,13 +705,13 @@ runServerStreamingWithSlowConsumerTest opts = do
               return (Left err)
             Right msg -> do
               liftIO (threadDelay delay)
-              go (msg : acc)
+              go client (msg : acc)
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callDownstream ctx mempty "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req)
-      resp <- withNewClient client $ do
-        msgs <- go []
-        closeCall
+      resp <- runRpc $ do
+        RpcOk client <- liftIO (callDownstream ctx mempty "/grpc.testing.TestService/StreamingOutputCall" (encodeMessage req))
+        msgs <- go client []
+        closeCall client
         return msgs
       case resp of
         RpcOk (Right msgs)
@@ -791,11 +791,11 @@ runStatusCodeAndMessageTest2 opts = do
               }
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
-      resp <- withNewClient client $ do
-        sendMessage (encodeMessage req)
-        sendHalfClose
-        closeCall
+      resp <- runRpc $ do
+        RpcOk client <- liftIO (callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall")
+        sendMessage client (encodeMessage req)
+        sendHalfClose client
+        closeCall client
       case resp of
         RpcError (StatusError StatusUnknown "test status message") -> return (Right ())
         _ -> return (Left ("expected (unknown, \"test status message\"), got= " ++ show resp))
@@ -876,16 +876,16 @@ runPingPongTest opts = do
             }
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
-      client <- callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall"
-      mds <- withNewClient client $ do
+      mds <- runRpc $ do
+        RpcOk client <- liftIO (callBidi ctx callOptions "/grpc.testing.TestService/FullDuplexCall")
         forM_ (zip responseSizes payloadSizes) $ \(respSize, payloadSize) -> do
-          sendMessage (encodeMessage (req respSize payloadSize))
-          _resp <- receiveMessage
+          sendMessage client (encodeMessage (req respSize payloadSize))
+          _resp <- receiveMessage client
           -- TODO: decode response and verify length of response size field
           return ()
-        sendHalfClose
-        Nothing <- receiveMessage
-        closeCall
+        sendHalfClose client
+        Nothing <- receiveMessage client
+        closeCall client
       case mds of
         RpcOk () ->
           return (Right ())

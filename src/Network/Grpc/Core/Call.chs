@@ -46,9 +46,7 @@ import qualified Foreign.Storable             as C
 
 -- transformers
 import           Control.Monad.IO.Class
-import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
-import           Control.Monad.Trans.Reader
 
 import qualified Network.Grpc.CompletionQueue as CQ
 import Network.Grpc.Lib.PropagationBits
@@ -532,105 +530,93 @@ clientCancelCallWithStatus ClientReaderWriter{..} status details = do
     CallOk -> return (RpcOk ())
     _ -> return (RpcError (CallErrorStatus err))
 
-type Rpc req resp a = ReaderT (Client req resp) (ExceptT RpcError IO) a
+type Rpc a = ExceptT RpcError IO a
 
-askCrw :: Rpc req resp ClientReaderWriter
-askCrw = asks clientCrw
-
-askDecoder :: Rpc req resp (Decoder resp)
-askDecoder = asks clientDecoder
-
-askEncoder :: Rpc req resp (Encoder req)
-askEncoder = asks clientEncoder
-
-joinReply :: RpcReply a -> Rpc req resp a
+joinReply :: RpcReply a -> Rpc a
 joinReply (RpcOk a) = return a
-joinReply (RpcError err) = lift (throwE err)
+joinReply (RpcError err) = throwE err
 
-withNewClient :: RpcReply (Client req resp) -> Rpc req resp a -> IO (RpcReply a)
-withNewClient r_client m = do
-  case r_client of
-    RpcOk client -> withClient client m
-    RpcError err -> return (RpcError err)
-
-withClient :: Client req resp -> Rpc req resp a -> IO (RpcReply a)
-withClient client m = do
+runRpc :: Rpc a -> IO (RpcReply a)
+runRpc m = do
   let m' = do
         x <- m
-        _ <- waitForStatus
-        throwIfErrorStatus
+        -- _ <- waitForStatus
+        -- throwIfErrorStatus
         return x
-  e <- runExceptT (runReaderT m' client)
+  e <- runExceptT m'
   case e of
     Left err -> return (RpcError err)
     Right a -> return (RpcOk a)
 
-clientRWOp :: (ClientReaderWriter -> IO a) -> Rpc req resp a
-clientRWOp act = do
-  crw <- askCrw
-  liftIO (act crw)
+clientRWOp :: Client req resp -> (ClientReaderWriter -> IO a) -> Rpc a
+clientRWOp client act =
+  liftIO (act (clientCrw client))
 
-joinClientRWOp :: (ClientReaderWriter -> IO (RpcReply a)) -> Rpc req resp a
-joinClientRWOp act = do
-  x <- clientRWOp act
+joinClientRWOp :: Client req resp -> (ClientReaderWriter -> IO (RpcReply a)) -> Rpc a
+joinClientRWOp client act = do
+  x <- clientRWOp client act
   joinReply x
 
-branchOnStatus :: Rpc req resp a
-               -> Rpc req resp a
-               -> (StatusCode -> B.ByteString -> Rpc req resp a)
-               -> Rpc req resp a
-branchOnStatus onProcessing onSuccess onFail = do
-  status <- clientRWOp (tryReadMVar . statusFromServer)
+branchOnStatus :: Client req resp
+               -> Rpc a
+               -> Rpc a
+               -> (StatusCode -> B.ByteString -> Rpc a)
+               -> Rpc a
+branchOnStatus client onProcessing onSuccess onFail = do
+  status <- clientRWOp client (tryReadMVar . statusFromServer)
   case status of
     Nothing -> onProcessing
     Just (RpcStatus _ code msg)
       | code == StatusOk -> onSuccess
       | otherwise -> onFail code msg
 
-throwIfErrorStatus :: Rpc req resp ()
-throwIfErrorStatus =
+throwIfErrorStatus :: Client req resp -> Rpc ()
+throwIfErrorStatus client =
   branchOnStatus
+    client
     (return ())
     (return ())
-    (\code msg -> lift (throwE (StatusError code msg)))
+    (\code msg -> throwE (StatusError code msg))
 
-initialMetadata :: Rpc req resp [Metadata]
-initialMetadata = do
-  status <- clientRWOp (readIORef . initialMDRef)
+initialMetadata :: Client req resp -> Rpc [Metadata]
+initialMetadata client = do
+  status <- clientRWOp client (readIORef . initialMDRef)
   case status of
     Just md -> return md
     Nothing ->
       branchOnStatus
-        (joinClientRWOp clientWaitForInitialMetadata)
-        (joinClientRWOp clientWaitForInitialMetadata)
-        (\code msg -> lift (throwE (StatusError code msg)))
+        client
+        (joinClientRWOp client clientWaitForInitialMetadata)
+        (joinClientRWOp client clientWaitForInitialMetadata)
+        (\code msg -> throwE (StatusError code msg))
 
-waitForStatus :: Rpc req resp RpcStatus
-waitForStatus = do
-  status <- clientRWOp (tryReadMVar . statusFromServer)
+waitForStatus :: Client req resp -> Rpc RpcStatus
+waitForStatus client = do
+  status <- clientRWOp client (tryReadMVar . statusFromServer)
   case status of
-    Nothing -> joinClientRWOp clientWaitForStatus
+    Nothing -> joinClientRWOp client clientWaitForStatus
     Just status' -> return status'
 
-receiveMessage :: Rpc req resp (Maybe resp)
-receiveMessage = do
+receiveMessage :: Client req resp -> Rpc (Maybe resp)
+receiveMessage client = do
   let
     onProcessing = do
-      msg <- joinClientRWOp clientRead
+      msg <- joinClientRWOp client clientRead
       case msg of
         Nothing -> return Nothing
         Just x -> do
-          decoder <- askDecoder
+          let decoder = clientDecoder client
           liftM Just (joinReply =<< liftIO (decoder x))
     onSuccess = return Nothing
-    onFail code msg = lift (throwE (StatusError code msg))
-  branchOnStatus onProcessing onSuccess onFail
+    onFail code msg = throwE (StatusError code msg)
+  branchOnStatus client onProcessing onSuccess onFail
 
-receiveAllMessages :: Rpc req resp [resp]
-receiveAllMessages = do
-  decoder <- askDecoder
-  let go acc = do
-        value <- joinClientRWOp clientRead
+receiveAllMessages :: Client req resp -> Rpc [resp]
+receiveAllMessages client = do
+  let
+    decoder = clientDecoder client
+    go acc = do
+        value <- joinClientRWOp client clientRead
         case value of
           Just x -> do
             y <- joinReply =<< (liftIO (decoder x))
@@ -638,32 +624,33 @@ receiveAllMessages = do
           Nothing -> return (reverse acc)
   go []
 
-sendMessage :: req -> Rpc req resp ()
-sendMessage req = do
-  throwIfErrorStatus
-  encoder <- askEncoder
+sendMessage :: Client req resp -> req -> Rpc ()
+sendMessage client req = do
+  throwIfErrorStatus client
+  let encoder = clientEncoder client
   bs <- joinReply =<< liftIO (encoder req)
-  joinClientRWOp (\crw -> clientWrite crw bs)
+  joinClientRWOp client (\crw -> clientWrite crw bs)
 
-sendHalfClose :: Rpc req resp ()
-sendHalfClose = do
-  throwIfErrorStatus
-  joinClientRWOp clientSendHalfClose
+sendHalfClose :: Client req resp -> Rpc ()
+sendHalfClose client = do
+  throwIfErrorStatus client
+  joinClientRWOp client clientSendHalfClose
 
-closeCall :: Rpc req resp ()
-closeCall = do
-  _ <- waitForStatus
-  clientRWOp clientCloseCall
-  throwIfErrorStatus
+closeCall :: Client req resp -> Rpc ()
+closeCall client = do
+  _ <- waitForStatus client
+  clientRWOp client clientCloseCall
+  throwIfErrorStatus client
 
 -- | Called by clients to cancel an RPC on the server.
 -- Can be called multiple times, from any thread.
-cancelCall :: Rpc req resp ()
-cancelCall =
+cancelCall :: Client req resp -> Rpc ()
+cancelCall client =
   branchOnStatus
-    (joinClientRWOp clientCancelCall)
+    client
+    (joinClientRWOp client clientCancelCall)
     (return ())
-    (\code msg -> lift (throwE (StatusError code msg)))
+    (\code msg -> throwE (StatusError code msg))
 
 -- | Called by clients to cancel an RPC on the server.
 -- Can be called multiple times, from any thread.
@@ -671,12 +658,13 @@ cancelCall =
 -- and description passed in.
 -- Importantly, this function does not send status nor description to the
 -- remote endpoint.
-cancelCallWithStatus :: StatusCode -> B.ByteString -> Rpc req resp ()
-cancelCallWithStatus status details =
+cancelCallWithStatus :: Client req resp -> StatusCode -> B.ByteString -> Rpc ()
+cancelCallWithStatus client status details =
   branchOnStatus
-    (joinClientRWOp (\crw -> clientCancelCallWithStatus crw status details))
+    client
+    (joinClientRWOp client (\crw -> clientCancelCallWithStatus crw status details))
     (return ())
-    (\code msg -> lift (throwE (StatusError code msg)))
+    (\code msg -> throwE (StatusError code msg))
 
 data RpcReply a
   = RpcOk a

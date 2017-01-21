@@ -74,21 +74,21 @@ main' = do
   let stub = createRouteGuideStub channel ctx
 
   measure "getFeature 1" $ do
-    res <- getFeature stub (Point 2 2)
+    res <- runRpc (getFeature stub (Point 2 2))
     print res
 
   measure "getFeature 2" $ do
     let stub' = stub `withCallOptions` withMetadata [Metadata "my-key" "my-value" 0]
-    res <- getFeature stub' (Point 42 42)
+    res <- runRpc (getFeature stub' (Point 42 42))
     print res
 
   measure "listFeatures" $ do
     let rect = Rectangle (Point 0 0) (Point 16 16)
-    reader <- listFeatures stub rect
-    features' <- withNewClient reader $ do
+    features <- runRpc $ do
+      reader <- listFeatures stub rect
       let
         readAll acc = do
-          msg <- receiveMessage
+          msg <- receiveMessage reader
           case msg of
             Just m -> do
               liftIO $ putStrLn ("got message: " ++ show m)
@@ -97,37 +97,34 @@ main' = do
               liftIO $ putStrLn "No more messages"
               return (reverse acc)
       msgs <- readAll []
-      status <- waitForStatus
-      closeCall
+      status <- waitForStatus reader
+      closeCall reader
       return (msgs, status)
-    print features'
+    print features
 
   measure "recordRoute" $ do
-    record <- recordRoute stub
-    rt <- withNewClient record $ do
+    rt <- runRpc $ do
+      record <- recordRoute stub
       forM_ [ Point x x | x <- [0..20] ] $ \p ->
-        sendMessage (fromPoint p)
-      sendHalfClose
-      x <- receiveMessage
-      closeCall
+        sendMessage record (fromPoint p)
+      sendHalfClose record
+      x <- receiveMessage record
+      closeCall record
       return x
-      -- initMetadata' <- getInitialMetadata recvInitMetadata
-      -- putStrLn ("got initial metadata: " ++ show initMetadata')
     print rt
 
   measure "async routeChat" $ do
-    RpcOk route <- routeChat stub
-    block <- newEmptyMVar
-    _ <- forkIO $ do -- the go example does this in a concurrent thread
-          --initMetadata <- getInitialMetadata recvInitMetadata
-          --putStrLn ("got initial metadata: " ++ show initMetadata)
-          RpcOk msgs <- withClient route receiveAllMessages
-          putMVar block msgs
-    RpcOk _ <- withClient route $ do
-      mapM_ sendMessage notes
-      sendHalfClose
-    msgs <- takeMVar block
-    RpcOk _ <- withClient route closeCall
+    RpcOk msgs <- runRpc $ do
+      route <- routeChat stub
+      block <- liftIO newEmptyMVar
+      _ <- liftIO $ forkIO $ do
+        RpcOk msgs <- runRpc (receiveAllMessages route)
+        putMVar block msgs
+      mapM_ (sendMessage route) notes
+      sendHalfClose route
+      msgs <- liftIO (takeMVar block)
+      closeCall route
+      return msgs
     putStrLn ("got " ++ show (length msgs) ++ " messages")
 
   putStrLn "*** Destroying client context"
@@ -206,21 +203,24 @@ data RouteGuideStub = RouteGuideStub {
 withCallOptions :: RouteGuideStub -> CallOptions -> RouteGuideStub
 withCallOptions client co = client { _callOptions = co }
 
-getFeature :: RouteGuideStub -> Point -> IO (RpcReply (UnaryResult L.ByteString))
-getFeature client =
-  _getFeature client (_clientContext client) (_callOptions client)
+callRpc :: IO (RpcReply a) -> Rpc a
+callRpc io = liftIO io >>= joinReply
 
-listFeatures :: RouteGuideStub -> Rectangle -> IO (RpcReply (Client B.ByteString L.ByteString))
-listFeatures client =
-  _listFeatures client (_clientContext client) (_callOptions client)
+getFeature :: RouteGuideStub -> Point -> Rpc (UnaryResult L.ByteString)
+getFeature client arg =
+  callRpc (_getFeature client (_clientContext client) (_callOptions client) arg)
 
-recordRoute :: RouteGuideStub -> IO (RpcReply (Client B.ByteString RouteSummary))
+listFeatures :: RouteGuideStub -> Rectangle -> Rpc (Client B.ByteString L.ByteString)
+listFeatures client arg =
+  callRpc (_listFeatures client (_clientContext client) (_callOptions client) arg)
+
+recordRoute :: RouteGuideStub -> Rpc (Client B.ByteString RouteSummary)
 recordRoute client =
-  _recordRoute client (_clientContext client) (_callOptions client)
+  callRpc (_recordRoute client (_clientContext client) (_callOptions client))
 
-routeChat :: RouteGuideStub -> IO (RpcReply (Client B.ByteString L.ByteString))
+routeChat :: RouteGuideStub -> Rpc (Client B.ByteString L.ByteString)
 routeChat client =
-  _routeChat client (_clientContext client) (_callOptions client)
+  callRpc (_routeChat client (_clientContext client) (_callOptions client))
 
 createRouteGuideStub :: Channel -> ClientContext -> RouteGuideStub
 createRouteGuideStub chan ctx0 = RouteGuideStub {
