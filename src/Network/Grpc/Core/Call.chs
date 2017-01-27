@@ -343,7 +343,7 @@ opRecvInitialMetadata crw = do
     add =
       [ \p -> do
         {#set grpc_op->op#} p (fromIntegral (fromEnum OpRecvInitialMetadata))
-        {#set grpc_op->data.recv_initial_metadata#} p arr
+        {#set grpc_op->data.recv_initial_metadata.recv_initial_metadata#} p arr
       ]
     finish = do
       mds <- readMetadataArray arr
@@ -360,7 +360,7 @@ opSendMessage bs = do
     add =
       [ \p -> do
         {#set grpc_op->op#} p (fromIntegral (fromEnum OpSendMessage))
-        {#set grpc_op->data.send_message#} p bb
+        {#set grpc_op->data.send_message.send_message#} p bb
       ]
     finish =
       byteBufferDestroy bb
@@ -374,7 +374,7 @@ opRecvMessage = do
     add =
       [ \p -> do
         {#set grpc_op->op#} p (fromIntegral (fromEnum OpRecvMessage))
-        {#set grpc_op->data.recv_message#} p bbptr
+        {#set grpc_op->data.recv_message.recv_message#} p bbptr
       ]
     finish = do
       bb <- C.peek bbptr
