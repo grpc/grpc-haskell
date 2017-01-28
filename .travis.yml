@@ -16,8 +16,15 @@ matrix:
   allow_failures:
     - env: CABALVER=head GHCVER=head
 
+# Dependencies required by grpc library.
+addons:
+  apt:
+    packages:
+      - build-essential
+      - autoconf
+      - libtool
+
 before_install:
- - sudo apt-get install -y build-essential autoconf libtool
  - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$PATH
  # Unfortunately it seems we have to fetch the full repository to be able to
  # clone it to create our workspace. We would be OK with a shallow repository
