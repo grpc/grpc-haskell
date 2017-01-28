@@ -23,7 +23,7 @@ install:
  - mkdir workspace
  - cp cabal.project.travis workspace/cabal.project
  - cd workspace
- - git clone .. grpc-haskell
+ - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
  - make shared_c static_c interop_server -j
