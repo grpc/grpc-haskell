@@ -1,0 +1,7 @@
+-- For every subdirectory, build all Cabal files
+-- (project files support multiple Cabal files in a directory)
+packages: */*.cabal
+
+package grpc
+  extra-include-dirs: $HOME/workspace/grpc/include
+  extra-lib-dirs: $HOME/workspace/grpc/libs/opt
