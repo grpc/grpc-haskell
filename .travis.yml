@@ -20,13 +20,10 @@ addons:
 matrix:
   include:
     - env: CABALVER=1.24 GHCVER=7.10.3
-      compiler: ": #GHC 7.10.3"
       addons: {apt: {packages: [*apt_packages, cabal-install-1.24, ghc-7.10.3], sources: [*apt_sources]}}
     - env: CABALVER=1.24 GHCVER=8.0.2
-      compiler: ": #GHC 8.0.2"
       addons: {apt: {packages: [*apt_packages, cabal-install-1.24, ghc-8.0.2], sources: [*apt_sources]}}
     - env: CABALVER=head GHCVER=head
-      compiler: ": #GHC head"
       addons: {apt: {packages: [*apt_packages, cabal-install-head, ghc-head],  sources: [*apt_sources]}}
 
   allow_failures:
