@@ -47,11 +47,15 @@ install:
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
  - make shared_c static_c -j
- - make interop_server -j1 # reduce memory footprint
+ # Disable interop_server for now.
+ # - make interop_server -j1 # reduce memory footprint
  - cd ..
+ - echo $(pwd)
  - cabal new-build --only-dependencies
 
 script:
+ - cd workspace
+ - echo $(pwd)
  - cabal new-build
 
 notifications:
