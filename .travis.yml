@@ -54,8 +54,9 @@ install:
  - cabal new-build --only-dependencies
 
 script:
- - cd workspace
  - echo $(pwd)
+ - ls -lah
+ - cat cabal.project
  - cabal new-build
 
 notifications:
