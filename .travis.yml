@@ -17,6 +17,10 @@ addons:
       - libgtest-dev
       - libc++-dev
 
+cache:
+  directories:
+    - $HOME/.cabal/packages
+
 matrix:
   include:
     - env: CABALVER=1.24 GHCVER=7.10.3
