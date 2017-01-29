@@ -2,6 +2,7 @@
 
 language: c
 
+dist: trusty
 sudo: false
 
 addons:
@@ -14,6 +15,7 @@ addons:
       - g++-4.9
       - libgflags-dev
       - libgtest-dev
+      - libc++-dev
 
 matrix:
   include:
@@ -29,6 +31,9 @@ matrix:
 
 before_install:
  - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$PATH
+ - ghc --version
+ - cabal --version
+ - travis_retry cabal update
  # Unfortunately it seems we have to fetch the full repository to be able to
  # clone it to create our workspace. We would be OK with a shallow repository
  # if we could make git to clone it.
