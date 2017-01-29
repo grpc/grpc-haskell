@@ -9,10 +9,10 @@ addons:
   apt:
     sources: &apt_sources
       - hvr-ghc
-      - ubuntu-toolchain-r-test
     packages: &apt_packages
-      - gcc-4.9
-      - g++-4.9
+      - build-essential
+      - autoconf
+      - libtool
       - libgflags-dev
       - libgtest-dev
       - libc++-dev
@@ -46,7 +46,7 @@ install:
  - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
- - make CC=gcc-4.9 CXX=g++-4.9 shared_c static_c interop_server -j
+ - make shared_c static_c interop_server -j
  - cd ..
  - cabal new-build --only-dependencies
 
