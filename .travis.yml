@@ -6,11 +6,11 @@ sudo: false
 
 matrix:
   include:
-    - env: CABALVER=1.24 GHCVER=7.10.3
+    - env: CABALVER=1.24 GHCVER=7.10.3 C_COMPILER=g++-4.8
       addons: {apt: {packages: [cabal-install-1.24,ghc-7.10.3,gcc-4.8,g++-4.8], sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
-    - env: CABALVER=1.24 GHCVER=8.0.2
-      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.2,gcc-4.8,g++-4.8], sources: [hvr-gh,ubuntu-toolchain-r-testc]}}
-    - env: CABALVER=head GHCVER=head
+    - env: CABALVER=1.24 GHCVER=8.0.2 C_COMPILER=g++-4.8
+      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.2,gcc-4.8,g++-4.8], sources: [hvr-ghc,ubuntu-toolchain-r-testc]}}
+    - env: CABALVER=head GHCVER=head C_COMPILER=g++-4.8
       addons: {apt: {packages: [cabal-install-head,ghc-head,gcc-4.8,g++-4.8],  sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
 
   allow_failures:
@@ -30,7 +30,7 @@ install:
  - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
- - make shared_c static_c interop_server -j
+ - CXX=$C_COMPILER make shared_c static_c interop_server -j
  - cd ..
  - cabal new-build --only-dependencies
 
