@@ -4,14 +4,25 @@ language: c
 
 sudo: false
 
+addons:
+  apt:
+    sources: &apt_sources
+      - hvr-ghc
+      - ubuntu-toolchain-r-test
+    packages: &apt_packages
+      - gcc-4.9
+      - g++-4.9
+      - libgflags-dev
+      - libgtest-dev
+
 matrix:
   include:
-    - env: CABALVER=1.24 GHCVER=7.10.3i MY_CC=gcc-4.8 MY_CXX=g++-4.8
-      addons: {apt: {packages: [cabal-install-1.24,ghc-7.10.3,gcc-4.8,g++-4.8], sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
-    - env: CABALVER=1.24 GHCVER=8.0.2 C_COMPILER=g++-4.8
-      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.2,gcc-4.8,g++-4.8], sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
-    - env: CABALVER=head GHCVER=head C_COMPILER=g++-4.8
-      addons: {apt: {packages: [cabal-install-head,ghc-head,gcc-4.8,g++-4.8],  sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
+    - env: CABALVER=1.24 GHCVER=7.10.3
+      addons: {apt: {packages: [*apt_packages, cabal-install-1.24, ghc-7.10.3], sources: [*apt_sources]}}
+    - env: CABALVER=1.24 GHCVER=8.0.2
+      addons: {apt: {packages: [*apt_packages, cabal-install-1.24, ghc-8.0.2], sources: [*apt_sources]}}
+    - env: CABALVER=head GHCVER=head
+      addons: {apt: {packages: [*apt_packages, cabal-install-head, ghc-head],  sources: [*apt_sources]}}
 
   allow_failures:
     - env: CABALVER=head GHCVER=head
@@ -30,7 +41,7 @@ install:
  - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
- - make CC=$MY_CC CXX=$MY_CXX shared_c static_c interop_server -j
+ - make CC=gcc-4.9 CXX=g++-4.9 shared_c static_c interop_server -j
  - cd ..
  - cabal new-build --only-dependencies
 
