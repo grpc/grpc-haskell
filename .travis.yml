@@ -46,7 +46,8 @@ install:
  - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
- - make shared_c static_c interop_server -j
+ - make shared_c static_c -j
+ - make interop_server -j1 # reduce memory footprint
  - cd ..
  - cabal new-build --only-dependencies
 
