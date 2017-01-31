@@ -55,13 +55,13 @@ install:
  # - make interop_server -j1 # reduce memory footprint
  - cd ..
  - echo $(pwd)
- - cabal new-build --only-dependencies
+ - cabal new-build --only-dependencies grpc
 
 script:
  - echo $(pwd)
  - ls -lah
  - cat cabal.project
- - cabal new-build -v
+ - cabal new-build -v grpc
 
 notifications:
   email:
