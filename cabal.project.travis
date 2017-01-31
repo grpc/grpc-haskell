@@ -2,6 +2,10 @@
 -- (project files support multiple Cabal files in a directory)
 packages: */*.cabal
 
+-- Travis CI only gives you 2 cores, but it looks like you have more.
+-- This makes it go slower, so let's explicitly limit to 2 cores.
+jobs: 2
+
 package grpc
   extra-include-dirs: $TRAVIS_BUILD_DIR/workspace/grpc/include
   extra-lib-dirs: $TRAVIS_BUILD_DIR/workspace/grpc/libs/opt
