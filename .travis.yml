@@ -45,7 +45,7 @@ before_install:
 
 install:
  - mkdir workspace
- - cp cabal.project.travis workspace/cabal.project
+ - envsubst < cabal.project.travis > workspace/cabal.project
  - cd workspace
  - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc

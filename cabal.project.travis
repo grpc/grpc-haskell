@@ -3,5 +3,5 @@
 packages: */*.cabal
 
 package grpc
-  extra-include-dirs: $HOME/workspace/grpc/include
-  extra-lib-dirs: $HOME/workspace/grpc/libs/opt
+  extra-include-dirs: $TRAVIS_BUILD_DIR/workspace/grpc/include
+  extra-lib-dirs: $TRAVIS_BUILD_DIR/workspace/grpc/libs/opt
