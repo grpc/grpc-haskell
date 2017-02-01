@@ -16,6 +16,9 @@ addons:
       - libgflags-dev
       - libgtest-dev
       - libc++-dev
+      # for c2hs
+      - alex-3.1.7
+      - happy-1.19.5
 
 cache:
   directories:
