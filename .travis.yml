@@ -48,6 +48,9 @@ install:
  - envsubst < cabal.project.travis > workspace/cabal.project
  - cd workspace
  - git clone --depth=1 .. grpc-haskell
+ - git clone --depth=1 https://github.com/haskell/c2hs
+ - (cd c2hs; cabal install c2hs --prefix=$TRAVIS_BUILD_DIR/workspace/local)
+ - export PATH=$TRAVIS_BUILD_DIR/workspace/local/bin:$PATH
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
  - make shared_c static_c -j
