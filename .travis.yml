@@ -22,7 +22,10 @@ addons:
 
 cache:
   directories:
+    - $HOME/.cabal/lib
     - $HOME/.cabal/packages
+    - $HOME/.cabal/share
+    - $HOME/.cabal/store
 
 matrix:
   include:
