@@ -2,36 +2,71 @@
 
 language: c
 
+dist: trusty
 sudo: false
+
+addons:
+  apt:
+    sources: &apt_sources
+      - hvr-ghc
+    packages: &apt_packages
+      - build-essential
+      - autoconf
+      - libtool
+      - libgflags-dev
+      - libgtest-dev
+      - libc++-dev
+      # for c2hs
+      - alex-3.1.7
+      - happy-1.19.5
+
+cache:
+  directories:
+    - $HOME/.cabal/lib
+    - $HOME/.cabal/packages
+    - $HOME/.cabal/share
+    - $HOME/.cabal/store
 
 matrix:
   include:
     - env: CABALVER=1.24 GHCVER=7.10.3
-      addons: {apt: {packages: [cabal-install-1.24,ghc-7.10.3], sources: [hvr-ghc]}}
-     - env: CABALVER=1.24 GHCVER=8.0.2
-      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.2], sources: [hvr-ghc]}}
+      addons: {apt: {packages: [*apt_packages, cabal-install-1.24, ghc-7.10.3], sources: [*apt_sources]}}
+    - env: CABALVER=1.24 GHCVER=8.0.2
+      addons: {apt: {packages: [*apt_packages, cabal-install-1.24, ghc-8.0.2], sources: [*apt_sources]}}
     - env: CABALVER=head GHCVER=head
-      addons: {apt: {packages: [cabal-install-head,ghc-head],  sources: [hvr-ghc]}}
+      addons: {apt: {packages: [*apt_packages, cabal-install-head, ghc-head],  sources: [*apt_sources]}}
 
   allow_failures:
     - env: CABALVER=head GHCVER=head
 
 before_install:
+ - export PATH=/opt/alex/3.1.7/bin:/opt/happy/1.19.5/bin:$PATH
  - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$PATH
+ - (which alex; which happy; which ghc; which cabal)
+ - (ghc --version; cabal --version)
+ - travis_retry cabal update
+ # Unfortunately it seems we have to fetch the full repository to be able to
+ # clone it to create our workspace. We would be OK with a shallow repository
+ # if we could make git to clone it.
+ - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
 
 install:
  - mkdir workspace
- - cp cabal.project.travis workspace/cabal.project
+ - envsubst < cabal.project.travis > workspace/cabal.project
  - cd workspace
- - git clone .. grpc-haskell
+ - git clone --depth=1 .. grpc-haskell
+ - git clone --depth=1 https://github.com/haskell/c2hs
+ - (cd c2hs; git log -1; cabal install --prefix=$TRAVIS_BUILD_DIR/workspace/local)
+ - export PATH=$TRAVIS_BUILD_DIR/workspace/local/bin:$PATH
+ - which c2hs
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
- - cd grpc
- - make shared_c static_c -j
- - cd ..
- - cabal new-build --only-dependencies
+ - (cd grpc; git log -1; make shared_c static_c -j)
+ # Disable interop_server for now.
+ # - make interop_server -j1 # reduce memory footprint
+ - cabal new-build --only-dependencies grpc
 
 script:
- - cabal new-build
+ - cabal new-build -v grpc
 
 notifications:
   email:
