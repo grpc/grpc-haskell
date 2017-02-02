@@ -60,12 +60,12 @@ install:
  - cd workspace
  - git clone --depth=1 .. grpc-haskell
  - git clone --depth=1 https://github.com/haskell/c2hs
- - (cd c2hs; git show; cabal install --prefix=$TRAVIS_BUILD_DIR/workspace/local)
+ - (cd c2hs; git log -1; cabal install --prefix=$TRAVIS_BUILD_DIR/workspace/local)
  - export PATH=$TRAVIS_BUILD_DIR/workspace/local/bin:$PATH
  - which c2hs
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - cd grpc
- - git show
+ - git log -1
  - make shared_c static_c -j
  # Disable interop_server for now.
  # - make interop_server -j1 # reduce memory footprint
