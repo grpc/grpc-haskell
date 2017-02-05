@@ -30,13 +30,6 @@
 #include <grpc/grpc.h>
 #include <grpc/support/time.h>
 
-typedef struct {
-    char *status_details;
-    size_t capacity;
-} hs_status_details;
-
-void hs_grpc_status_details_set_no_capacity(hs_status_details *details);
-
 void hs_grpc_completion_queue_next(grpc_completion_queue *cq,
                                    gpr_timespec *deadline,
                                    grpc_event *out_event);
@@ -50,7 +43,11 @@ grpc_call *hs_grpc_channel_create_call(grpc_channel *channel,
                                        grpc_call *parent_call,
                                        uint32_t propagation_mask,
                                        grpc_completion_queue *cq,
-                                       const char *method, const char *host,
+                                       grpc_slice *method, const grpc_slice *host,
                                        gpr_timespec *deadline);
+
+void hs_grpc_slice_from_copied_buffer(const char *source, size_t length, grpc_slice *out);
+
+void hs_grpc_slice_from_static_string(const char *source, grpc_slice *out);
 
 #endif  /* HS_HS_GRPC_H */
