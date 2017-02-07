@@ -35,4 +35,6 @@ grpc_byte_buffer *hs_raw_byte_buffer_create(const char *source, size_t len);
 
 void hs_grpc_byte_buffer_reader_readall(grpc_byte_buffer_reader *reader, grpc_slice *out_slice);
 
+void hs_grpc_slice_unref(grpc_slice *slice);
+
 #endif  /* HS_HS_BYTE_BUFFER_H */

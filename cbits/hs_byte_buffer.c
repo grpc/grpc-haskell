@@ -40,3 +40,7 @@ void hs_grpc_byte_buffer_reader_readall(grpc_byte_buffer_reader *reader, grpc_sl
 	grpc_slice tmp = grpc_byte_buffer_reader_readall(reader);
 	memcpy(out_slice, &tmp, sizeof(grpc_slice));
 }
+
+void hs_grpc_slice_unref(grpc_slice *slice) {
+	grpc_slice_unref(*slice);
+}
