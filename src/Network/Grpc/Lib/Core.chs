@@ -28,6 +28,9 @@
 
 module Network.Grpc.Lib.Core where
 
+#include <grpc/grpc.h>
+#include "hs_grpc.h"
+
 import Data.List(genericLength)
 import Data.Monoid ((<>))
 import Foreign.C.Types
@@ -44,9 +47,7 @@ import qualified Data.HashMap.Strict as Map
 
 import Network.Grpc.Lib.PropagationBits
 {#import Network.Grpc.Lib.TimeSpec#}
-
-#include <grpc/grpc.h>
-#include "hs_grpc.h"
+{#import Network.Grpc.Lib.ByteBuffer#}
 
 {#context lib = "grpc" prefix = "grpc"#}
 
@@ -126,13 +127,14 @@ data CChannel
 
 data Channel = Channel
   { cChannel :: !GrpcChannel
-  , cHost    :: !B.ByteString
+  , cHost    :: !Slice
   }
 
 createInsecureChannel :: B.ByteString -> Int -> ChannelArgs -> IO Channel
 createInsecureChannel host port args = do
   chan <- grpcInsecureChannelCreate hostPort args nullPtr
-  return $! Channel chan host
+  hostSlice <- sliceFromCopy host
+  return $! Channel chan hostSlice
   where
     hostPort = host <> ":" <> (C8.pack (show port))
 
@@ -250,8 +252,8 @@ fromCallError = fromIntegral . fromEnum
     id `Ptr CCall',
     fromIntegral `PropagationMask',
     `CompletionQueue',
-    useAsCString* `ByteString',
-    useAsCString* `ByteString',
+    `Slice',
+    `Slice',
     with* `TimeSpec' } -> `Call' #}
 
 {#fun unsafe grpc_call_destroy as ^

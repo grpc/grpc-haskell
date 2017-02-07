@@ -45,21 +45,21 @@ import qualified Data.ByteString.Char8     as BC8
 import qualified Data.ByteString.Lazy      as L
 
 import           Network.Grpc.Core.Call
+import           Network.Grpc.Lib.ByteBuffer
 import           Network.Grpc.Lib.Core
 import           Network.Grpc.Lib.Metadata
 import           Network.Grpc.Lib.Version
 
-
-getFeatureMethodName :: B.ByteString
+getFeatureMethodName :: Slice
 getFeatureMethodName = "/routeguide.RouteGuide/GetFeature"
 
-listFeaturesMethodName :: B.ByteString
+listFeaturesMethodName :: Slice
 listFeaturesMethodName = "/routeguide.RouteGuide/ListFeatures"
 
-recordRouteMethodName :: B.ByteString
+recordRouteMethodName :: Slice
 recordRouteMethodName = "/routeguide.RouteGuide/RecordRoute"
 
-routeChatMethodName :: B.ByteString
+routeChatMethodName :: Slice
 routeChatMethodName = "/routeguide.RouteGuide/RouteChat"
 
 main :: IO ()
@@ -169,6 +169,7 @@ measure desc io = bracket aquire release (\_ -> io)
       putStrLn "###"
       getCurrentTime
     release start = do
+      performMajorGC
       end <- getCurrentTime
       putStrLn (" - timing: " ++ show (diffUTCTime end start))
       putStrLn ""

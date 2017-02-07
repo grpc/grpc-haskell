@@ -39,9 +39,9 @@ import           Data.IORef
 
 import           Foreign.C.Types              as C
 import qualified Foreign.Marshal.Alloc        as C
-import qualified Foreign.Marshal.Utils        as C
 import qualified Foreign.Ptr                  as C
 import           Foreign.Ptr (Ptr)
+import qualified Foreign.ForeignPtr           as C
 import qualified Foreign.Storable             as C
 
 -- transformers
@@ -50,7 +50,8 @@ import           Control.Monad.Trans.Except
 
 import qualified Network.Grpc.CompletionQueue as CQ
 import Network.Grpc.Lib.PropagationBits
-{#import Network.Grpc.Lib.ByteBuffer#}
+{#import Network.Grpc.Lib.ByteBuffer#} (Slice, CSlice, ByteBuffer)
+import qualified Network.Grpc.Lib.ByteBuffer as BB
 {#import Network.Grpc.Lib.Metadata#}
 {#import Network.Grpc.Lib.TimeSpec#}
 {#import Network.Grpc.Lib.Core#}
@@ -131,7 +132,7 @@ destroyClientContext (ClientContext _ cq w) = do
   completionQueueShutdown cq
   CQ.waitWorkerTermination w
 
-type MethodName = B.ByteString
+type MethodName = Slice
 type Arg = B.ByteString
 
 -- | Run the IO function once, cache it in the MVar.
@@ -354,7 +355,7 @@ opRecvInitialMetadata crw = do
 
 opSendMessage :: B.ByteString -> IO (OpT ())
 opSendMessage bs = do
-  bb <- fromByteString bs
+  bb <- BB.fromByteString bs
   value <- newIORef ()
   let
     add =
@@ -363,12 +364,12 @@ opSendMessage bs = do
         {#set grpc_op->data.send_message.send_message#} p bb
       ]
     finish =
-      byteBufferDestroy bb
+      BB.byteBufferDestroy bb
   return (Op add value finish)
 
 opRecvMessage :: IO (OpT (Maybe L.ByteString))
 opRecvMessage = do
-  bbptr <- C.malloc :: IO (Ptr (Ptr CByteBuffer))
+  bbptr <- C.malloc :: IO (Ptr (Ptr BB.CByteBuffer))
   value <- newIORef Nothing
   let
     add =
@@ -381,8 +382,8 @@ opRecvMessage = do
       C.free bbptr
       writeIORef value =<< if bb /= C.nullPtr
         then do
-          lbs <- toLazyByteString bb
-          byteBufferDestroy bb
+          lbs <- BB.toLazyByteString bb
+          BB.byteBufferDestroy bb
           return (Just lbs)
         else return Nothing
   return (Op add value finish)
@@ -411,8 +412,7 @@ opRecvStatusOnClient :: ClientReaderWriter -> IO (OpT RpcStatus)
 opRecvStatusOnClient (ClientReaderWriter{..}) = do
   trailingMetadataArrPtr <- mallocMetadataArray
   statusCodePtr <- C.malloc :: IO (Ptr StatusCodeT)
-  ptrPtrStatusStr <- C.new C.nullPtr :: IO (Ptr (Ptr CChar))
-  capacityPtr <- C.new 0 :: IO (Ptr SizeT)
+  statusSlice <- BB.mallocSlice
   value <- newIORef (error "opRecvStatusOnClient never ran")
   let
     add =
@@ -420,13 +420,12 @@ opRecvStatusOnClient (ClientReaderWriter{..}) = do
         {#set grpc_op->op#} p (fromIntegral (fromEnum OpRecvStatusOnClient))
         {#set grpc_op->data.recv_status_on_client.trailing_metadata#} p trailingMetadataArrPtr
         {#set grpc_op->data.recv_status_on_client.status#} p statusCodePtr
-        {#set grpc_op->data.recv_status_on_client.status_details#} p ptrPtrStatusStr
-        {#set grpc_op->data.recv_status_on_client.status_details_capacity#} p capacityPtr
+        C.withForeignPtr statusSlice $ \statusSlice' -> {#set grpc_op->data.recv_status_on_client.status_details#} p statusSlice'
       ]
     finish = do
       trailingMd <- readMetadataArray trailingMetadataArrPtr
       statusCode <- fmap toStatusCode (C.peek statusCodePtr)
-      statusDetails <- B.packCString =<< C.peek ptrPtrStatusStr
+      statusDetails <- BB.toByteString statusSlice
       let status = RpcStatus trailingMd statusCode statusDetails
       writeIORef value status
       putMVar statusFromServer status
@@ -434,8 +433,7 @@ opRecvStatusOnClient (ClientReaderWriter{..}) = do
     free = do
       freeMetadataArray trailingMetadataArrPtr
       C.free statusCodePtr
-      C.free ptrPtrStatusStr
-      C.free capacityPtr
+      C.finalizeForeignPtr statusSlice
   return (Op add value finish)
 
 opSendCloseFromClient :: IO (OpT ())

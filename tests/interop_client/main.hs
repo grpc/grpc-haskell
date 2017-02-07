@@ -539,6 +539,7 @@ runTimeoutOnSleepingServerTest opts = do
         RpcError err ->
           return (Left ("got error=" ++ show err ++ ", want=StatusDeadlineExceeded"))
         RpcOk () -> return (Left "got status=OK, want=StatusDeadlineExceeded")
+
 -- |This test verifies that streams support having zero-messages in both
 -- directions.
 -- Server features:

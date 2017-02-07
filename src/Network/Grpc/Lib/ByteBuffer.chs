@@ -24,10 +24,21 @@
 -- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --
 --------------------------------------------------------------------------------
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ForeignFunctionInterface, MagicHash, TypeSynonymInstances, FlexibleInstances #-}
 module Network.Grpc.Lib.ByteBuffer
   ( CByteBuffer
   , ByteBuffer
+
+  , Slice
+  , CSlice
+  , sliceFromCopy
+  , toByteString
+  , grpcSliceRef
+  , grpcSliceUnref
+  , sliceFromStaticByteString
+  , grpcSliceFromCopiedBuffer
+  , mallocSlice
+
   , fromByteString
   , toLazyByteString
   , byteBufferLength
@@ -47,12 +58,22 @@ import Control.Exception (finally)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Internal as B
 import qualified Data.ByteString.Lazy as L
 
+import Data.String
+
+import GHC.Prim (Addr#)
+import GHC.Ptr (Ptr(..))
+
+import System.IO.Unsafe ( unsafePerformIO )
+
+#include <grpc/grpc.h>
 #include <grpc/byte_buffer.h>
 #include <grpc/byte_buffer_reader.h>
 #include "hs_byte_buffer.h"
+#include "hs_grpc.h"
 
 {#context lib = "grpc" prefix = "grpc" #}
 
@@ -74,7 +95,7 @@ data CByteBufferReader
 {#pointer *byte_buffer_reader as ByteBufferReader -> CByteBufferReader#}
 
 data CSlice
-{#pointer *grpc_slice as Slice -> CSlice#}
+{#pointer *grpc_slice as Slice foreign -> CSlice #}
 
 type SizeT = {#type size_t#}
 
@@ -90,29 +111,69 @@ withByteString bs act = do
   {withByteString* `ByteString'&} -> `ByteBuffer' #}
 
 toByteString :: Slice -> IO ByteString
-toByteString slice = do
+toByteString slice0 = withForeignPtr slice0 $ \slice -> do
   refcount <- {#get grpc_slice->refcount#} slice
   if refcount == nullPtr
-    then fromInlined
-    else fromRefcounted
+    then fromInlined slice
+    else fromRefcounted slice
   where
-    fromInlined = do
+    fromInlined slice = do
       len <- {#get grpc_slice->data.inlined.length#} slice
       ptr <- {#get grpc_slice->data.inlined.bytes#} slice
       B.packCStringLen (castPtr ptr, fromIntegral len)
-    fromRefcounted = do
+    fromRefcounted slice = do
       len <- {#get grpc_slice->data.refcounted.length#} slice
       ptr <- {#get grpc_slice->data.refcounted.bytes#} slice
       B.packCStringLen (castPtr ptr, fromIntegral len)
 
+mallocSlice :: IO Slice
+mallocSlice =
+  mallocForeignPtrBytes {#sizeof grpc_slice#}
+
+sliceFromCopy :: ByteString -> IO Slice
+sliceFromCopy bs = do
+  slice <- mallocSlice
+  grpcSliceFromCopiedBuffer bs slice
+  addForeignPtrFinalizer grpcSlideUnrefFinalizer slice
+  return slice
+
+instance IsString Slice where
+  fromString = unsafePerformIO . sliceFromCopy . B8.pack
+  {-# NOINLINE fromString #-}
+
+{#fun unsafe hs_grpc_slice_from_copied_buffer as grpcSliceFromCopiedBuffer
+  { withByteString* `ByteString'&
+  , `Slice' } -> `()' #}
+
+-- | Make a Slice without a reference counter.
+sliceFromStaticByteString :: ByteString -> IO Slice
+sliceFromStaticByteString bs = do
+  slice <- mallocSlice
+  -- Since the underlying string is static, there is no need to
+  -- call grpc_slice_unref. All we need to do is to free the memory for
+  -- the grpc_slice itself.
+  withByteString bs $ \(ptr, _) -> grpcSliceFromStaticString ptr slice
+  return slice
+
+-- | Make a Slice without a reference counter.
+sliceFromStaticString# :: Addr# -> IO Slice
+sliceFromStaticString# addr# = do
+  slice <- mallocSlice
+  grpcSliceFromStaticString (Ptr addr#) slice
+  return slice
+
+{#fun unsafe hs_grpc_slice_from_static_string as grpcSliceFromStaticString
+  { id `Ptr CChar'
+  , `Slice' } -> `()' #}
+
 toLazyByteString :: ByteBuffer -> IO L.ByteString
 toLazyByteString bb =
-  allocaByteBufferReader $ \ bbr ->
-  allocaSlice $ \slice -> do
-    ok <- byteBufferReaderInit bbr bb
-    if ok
-      then finally (go bbr slice []) (byteBufferReaderDestroy bbr)
-      else return L.empty -- TODO: assert
+  allocaByteBufferReader $ \ bbr -> do
+  slice <- mallocSlice
+  ok <- byteBufferReaderInit bbr bb
+  if ok
+    then finally (go bbr slice []) (byteBufferReaderDestroy bbr)
+    else return L.empty -- TODO: assert
   where
     go bbr slice acc = do
       ok <- byteBufferReaderNext bbr slice
@@ -122,10 +183,6 @@ toLazyByteString bb =
           grpcSliceUnref slice
           go bbr slice (bs:acc)
         else return $! L.fromChunks (reverse acc)
-
-allocaSlice :: (Slice -> IO a) -> IO a
-allocaSlice act = do
-  allocaBytes {#sizeof grpc_slice#} $ \p -> act p
 
 allocaByteBufferReader :: (ByteBufferReader -> IO a) -> IO a
 allocaByteBufferReader act = do
@@ -155,7 +212,15 @@ allocaByteBufferReader act = do
 {#fun unsafe hs_grpc_byte_buffer_reader_readall as ^
   {`ByteBufferReader', `Slice'} -> `()' #}
 
+-- | Ref a 'Slice'. When the reference counter reaches zero, the slice will
+-- be deallocated.
+{#fun unsafe grpc_slice_ref as ^
+  {%`Slice'} -> `()' #}
+
 -- | Unref a 'Slice'. When the reference counter reaches zero, the slice will
 -- be deallocated.
 {#fun unsafe grpc_slice_unref as ^
   {%`Slice'} -> `()' #}
+
+foreign import ccall "hs_byte_buffer.h &hs_grpc_slice_unref"
+  grpcSlideUnrefFinalizer :: FunPtr (Ptr CSlice -> IO ())
