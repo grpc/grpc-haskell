@@ -68,6 +68,8 @@ executable interop_client
   hs-source-dirs:      tests/interop_client, tests/interop_client/proto
   main-is:             main.hs
   build-depends:       base >= 4.6 && <4.10, grpc, bytestring
+  if impl(ghc < 8)
+    build-depends:     transformers
 
   -- dependencies inherited for the proto encoder/decoder
   build-depends:       proto-lens, lens-family, data-default-class, text, containers
