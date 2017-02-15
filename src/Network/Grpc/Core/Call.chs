@@ -34,6 +34,7 @@ import           Control.Monad
 
 import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as L
+import           Data.Maybe (maybeToList)
 import           Data.Monoid ((<>), Last(..))
 import           Data.IORef
 
@@ -77,16 +78,18 @@ data CallOptions = CallOptions
   , coParentContext :: Maybe () -- todo
   , coPropagationMask :: Maybe PropagationMask
   , coMetadata :: [Metadata]
+  , coCompressionAlgo :: Maybe CompressionAlgorithm
   }
 
 instance Monoid CallOptions where
-  mempty = CallOptions Nothing Nothing Nothing []
-  mappend (CallOptions a b c d) (CallOptions a' b' c' d') =
+  mempty = CallOptions Nothing Nothing Nothing [] Nothing
+  mappend (CallOptions a b c d e) (CallOptions a' b' c' d' e') =
     CallOptions
       (getLast (Last a <> Last a'))
       (getLast (Last b <> Last b'))
       (getLast (Last c <> Last c'))
       (d <> d')
+      (getLast (Last e <> Last e'))
 
 withAbsoluteDeadline :: TimeSpec -> CallOptions
 withAbsoluteDeadline deadline =
@@ -112,6 +115,21 @@ withParentContextPropagating ctx prop =
 withMetadata :: [Metadata] -> CallOptions
 withMetadata md =
   mempty { coMetadata = md }
+
+withCompression :: CompressionAlgorithm -> CallOptions
+withCompression algo = mempty { coCompressionAlgo = Just algo }
+
+compressionAsMetadata :: CompressionAlgorithm -> Metadata
+compressionAsMetadata algo =
+  Metadata
+    compressionRequestAlgorithmMdKey
+    (compressionAlgorithmName algo)
+    0
+
+metadataToSend :: CallOptions -> [Metadata]
+metadataToSend co =
+  maybeToList (compressionAsMetadata <$> coCompressionAlgo co)
+  ++ coMetadata co
 
 resolveDeadline :: CallOptions -> IO TimeSpec
 resolveDeadline co =
@@ -155,7 +173,7 @@ callUnary ctx@(ClientContext chan cq _) co method arg = do
   bracket (grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
     crw <- newClientReaderWriter ctx mcall
 
-    sendInitOp <- opSendInitialMetadata (coMetadata co)
+    sendInitOp <- opSendInitialMetadata (metadataToSend co)
     sendCloseOp <- opSendCloseFromClient
     sendMessageOp <- opSendMessage arg
     recvStatusOp <- opRecvStatusOnClient crw
@@ -188,7 +206,7 @@ callDownstream ctx@(ClientContext chan cq _) co method arg = do
   mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
   crw <- newClientReaderWriter ctx mcall
 
-  sendInitOp <- opSendInitialMetadata (coMetadata co)
+  sendInitOp <- opSendInitialMetadata (metadataToSend co)
   sendCloseOp <- opSendCloseFromClient
   sendMessageOp <- opSendMessage arg
 
@@ -211,7 +229,7 @@ callUpstream ctx@(ClientContext chan cq _) co method = do
   mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
   crw <- newClientReaderWriter ctx mcall
 
-  sendInitOp <- opSendInitialMetadata (coMetadata co)
+  sendInitOp <- opSendInitialMetadata (metadataToSend co)
 
   res <- callBatch crw [ OpX sendInitOp ]
   case res of
@@ -228,7 +246,7 @@ callBidi ctx@(ClientContext chan cq _) co method = do
   mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
 
   crw <- newClientReaderWriter ctx mcall
-  sendInitOp <- opSendInitialMetadata (coMetadata co)
+  sendInitOp <- opSendInitialMetadata (metadataToSend co)
 
   res <- callBatch crw [ OpX sendInitOp ]
   case res of

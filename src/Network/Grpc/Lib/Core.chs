@@ -29,6 +29,7 @@
 module Network.Grpc.Lib.Core where
 
 #include <grpc/grpc.h>
+#include <grpc/compression.h>
 #include "hs_grpc.h"
 
 import Data.List(genericLength)
@@ -42,6 +43,9 @@ import Foreign.Ptr (Ptr, nullPtr, castPtr, plusPtr)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
 import Data.ByteString (ByteString, useAsCString)
+import Data.ByteString.Unsafe (unsafePackCString)
+
+import System.IO.Unsafe (unsafeDupablePerformIO)
 
 import qualified Data.HashMap.Strict as Map
 
@@ -271,3 +275,39 @@ fromCallError = fromIntegral . fromEnum
   , `StatusCode'
   , useAsCString* `ByteString'
   , id `Ptr ()' } -> `CallError' #}
+
+
+-- --------------------
+-- Compression
+-- --------------------
+
+-- |To be used as initial metadata key for the request of a concrete
+-- compression algorithm.
+compressionRequestAlgorithmMdKey :: ByteString
+compressionRequestAlgorithmMdKey =
+  {#const GRPC_COMPRESSION_REQUEST_ALGORITHM_MD_KEY#}
+
+{#enum compression_algorithm as CompressionAlgorithm {underscoreToCase}
+  omit (GRPC_COMPRESS_ALGORITHMS_COUNT) #}
+
+{#enum compression_level as CompressionLevel {underscoreToCase}
+  omit (GRPC_COMPRESS_LEVEL_COUNT) #}
+
+-- | Updates \a name with the encoding name corresponding to a valid \a
+-- algorithm. Note that \a name is statically allocated and must *not* be freed.
+-- Returns 1 upon success, 0 otherwise. */
+{#fun unsafe grpc_compression_algorithm_name as compressionAlgorithmName_
+  {`CompressionAlgorithm'
+  , id `Ptr (Ptr CChar)'
+  } -> `Bool' #}
+
+-- | Returns the encoding name for the given algorithm.
+compressionAlgorithmName :: CompressionAlgorithm -> ByteString
+compressionAlgorithmName algo = unsafeDupablePerformIO $
+  alloca $ \ptrPtr -> do
+    res <- compressionAlgorithmName_ algo ptrPtr
+    if res
+      then do
+        ptr <- peek ptrPtr
+        unsafePackCString ptr
+      else error "compressionAlgorithmName: no name for algorithm"
