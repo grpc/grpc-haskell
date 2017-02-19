@@ -60,7 +60,7 @@ library
 executable route_guide_client
   hs-source-dirs:      examples
   main-is:             route_guide_client.hs
-  build-depends:       base >=4.6 && <4.10, grpc, bytestring, time, async, transformers >= 0.4.1.0
+  build-depends:       base >=4.6 && <4.10, grpc, bytestring, time, transformers >= 0.4.1.0
   default-language:    Haskell2010
   ghc-options:         -threaded -Wall
 
