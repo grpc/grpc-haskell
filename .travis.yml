@@ -61,12 +61,20 @@ install:
  - which c2hs
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
  - (cd grpc; git log -1; make shared_c static_c -j)
- # Disable interop_server for now.
- # - make interop_server -j1 # reduce memory footprint
+ # build haskell library/executables as early as we can
  - cabal new-build --only-dependencies grpc
+ # only then build the time consuming interop_server.
+ # reduce memory footprint with -jN. Using more memory may cause failures.
+ - (cd grpc; make interop_server -j2)
+ # launch interop_server in the background
+ - (grpc/bins/opt/interop_server --port=5050 &)
 
 script:
  - cabal new-build -v grpc
+ # run the haskell interop client against the C++ server.
+ # cabal-install doesn't yet have nix-style 'cabal run', find executable by hand.
+ - export LD_LIBRARY_PATH=$TRAVIS_BUILD_DIR/workspace/grpc/libs/opt:LD_LIBRARY_PATH
+ - dist-newstyle/build/grpc-*/build/interop_client/interop_client --server_host=localhost --server_port=5050 --test_case=all
 
 notifications:
   email:
