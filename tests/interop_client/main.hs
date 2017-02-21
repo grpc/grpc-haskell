@@ -95,7 +95,7 @@ data TestCase
 
 defaultOptions :: Options
 defaultOptions = Options
-  { optServerHost = ""
+  { optServerHost = "localhost"
   , optServerHostOverride = ""
   , optServerPort = 0
   , optTestCase = TestCaseUnknown "not specified"
@@ -144,7 +144,7 @@ options :: [OptDescr (Options -> Options)]
 options =
   [ Option [] ["server_host"]
       (ReqArg (\host opts -> opts { optServerHost = host }) "HOSTNAME")
-      "The server host to connect to. For example, \"localhost\" or \"127.0.0.1\""
+      "The server host to connect to. Default is \"localhost\""
   , Option [] ["server_host_override"]
       (ReqArg (\host opts -> opts { optServerHostOverride = host}) "HOSTNAME")
       ("The server host to claim to be connecting to, for use in TLS and HTTP/2 :authority header.\n"
