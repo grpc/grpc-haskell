@@ -165,7 +165,7 @@ data Event
 
 {#enum completion_type as ^ {underscoreToCase} add prefix = "Enum" deriving (Show,Eq)#}
 
-{#fun unsafe completion_queue_create as ^
+{#fun unsafe completion_queue_create_for_next as ^
   { `Ptr ()' } -> `CompletionQueue'#}
 
 -- Must be marked with safe (not unsafe) as it may block.

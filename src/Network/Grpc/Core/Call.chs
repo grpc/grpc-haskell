@@ -141,7 +141,7 @@ resolveDeadline co =
 
 newClientContext :: Channel -> IO ClientContext
 newClientContext chan = do
-  cq <- completionQueueCreate reservedPtr
+  cq <- completionQueueCreateForNext reservedPtr
   cqt <- CQ.startCompletionQueueThread cq
   return (ClientContext chan cq cqt)
 
