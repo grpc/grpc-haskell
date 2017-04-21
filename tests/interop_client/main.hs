@@ -39,6 +39,8 @@ import           System.Environment
 import           System.Exit
 import           System.Mem
 
+import           Control.Monad.Trans.Except
+
 import qualified Data.ByteString                       as B
 import qualified Data.ByteString.Char8                 as C8
 import qualified Data.ByteString.Lazy                  as L
@@ -530,7 +532,9 @@ runTimeoutOnSleepingServerTest opts = do
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- runRpc $ do
         client <- joinReply =<< liftIO (callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall")
-        sendMessage client (encodeMessage req)
+        catchE
+          (sendMessage client (encodeMessage req))
+          (\_ -> return ())
         _ <- waitForStatus client
         closeCall client
       case resp of
