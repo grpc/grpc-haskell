@@ -260,7 +260,7 @@ fromCallError = fromIntegral . fromEnum
     `Slice',
     with* `TimeSpec' } -> `Call' #}
 
-{#fun unsafe grpc_call_destroy as ^
+{#fun unsafe grpc_call_unref as ^
   {`Call'} -> `()'#}
 
 {#fun unsafe grpc_call_start_batch as ^

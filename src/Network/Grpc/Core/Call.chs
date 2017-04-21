@@ -170,7 +170,7 @@ data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 callUnary :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
 callUnary ctx@(ClientContext chan cq _) co method arg = do
   deadline <- resolveDeadline co
-  bracket (grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline) grpcCallDestroy $ \call0 -> newMVar call0 >>= \mcall -> do
+  bracket (grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline) grpcCallUnref $ \call0 -> newMVar call0 >>= \mcall -> do
     crw <- newClientReaderWriter ctx mcall
 
     sendInitOp <- opSendInitialMetadata (metadataToSend co)
@@ -521,8 +521,8 @@ clientCloseCall :: ClientReaderWriter -> IO ()
 clientCloseCall crw@ClientReaderWriter{..} = do
   _ <- clientWaitForStatus crw
   modifyMVar_ callMVar_ $ \call -> do
-    grpcCallDestroy call
-    return (error "grpcCallDestroy called on this Call")
+    grpcCallUnref call
+    return (error "grpcCallUnref called on this Call")
 
 clientCancelCall :: ClientReaderWriter -> IO (RpcReply ())
 clientCancelCall ClientReaderWriter{..} = do
