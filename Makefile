@@ -3,7 +3,7 @@
 
 all: grpc.cabal
 
-grpc.cabal: grpc.cabal.template
+grpc.cabal: grpc.cabal.template third_party/grpc/build.yaml
 	rm third_party/grpc/grpc.cabal || true
 	cp grpc.cabal.template third_party/grpc/templates/
 	(cd third_party/grpc && ./tools/buildgen/generate_projects.sh)
