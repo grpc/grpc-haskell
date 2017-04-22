@@ -531,10 +531,12 @@ runTimeoutOnSleepingServerTest opts = do
   bracket (newChannel opts) destroyChannel $ \channel ->
     bracket (newClientContext channel) destroyClientContext $ \ctx -> do
       resp <- runRpc $ do
-        client <- joinReply =<< liftIO (callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall")
+        call <- liftIO (callBidi ctx callOptions' "/grpc.testing.TestService/FullDuplexCall")
+        client <- joinReply call
         catchE
           (sendMessage client (encodeMessage req))
           (\_ -> return ())
+        _ <- initialMetadata client
         _ <- waitForStatus client
         closeCall client
       case resp of

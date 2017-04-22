@@ -585,15 +585,7 @@ throwIfErrorStatus client =
 
 initialMetadata :: Client req resp -> Rpc [Metadata]
 initialMetadata client = do
-  status <- clientRWOp client (readIORef . initialMDRef)
-  case status of
-    Just md -> return md
-    Nothing ->
-      branchOnStatus
-        client
-        (joinClientRWOp client clientWaitForInitialMetadata)
-        (joinClientRWOp client clientWaitForInitialMetadata)
-        (\code msg -> throwE (StatusError code msg))
+  joinClientRWOp client clientWaitForInitialMetadata
 
 waitForStatus :: Client req resp -> Rpc RpcStatus
 waitForStatus client = do
