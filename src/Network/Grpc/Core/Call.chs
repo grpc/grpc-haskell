@@ -58,7 +58,7 @@ module Network.Grpc.Core.Call
   , RpcError(..)
   , RpcStatus(..)
 
-  , initialMetadata
+  , recvInitialMetadata
   , waitForStatus
   , sendMessage
   , receiveMessage
@@ -608,8 +608,8 @@ throwIfErrorStatus client =
     (return ())
     (\code msg -> throwE (StatusError code msg))
 
-initialMetadata :: Client req resp -> Rpc [Metadata]
-initialMetadata client = do
+recvInitialMetadata :: Client req resp -> Rpc [Metadata]
+recvInitialMetadata client = do
   joinClientRWOp client clientWaitForInitialMetadata
 
 waitForStatus :: Client req resp -> Rpc RpcStatus

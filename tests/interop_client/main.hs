@@ -424,7 +424,7 @@ runCustomMetadataTest opts =
             sendMessage client (encodeMessage req)
             sendHalfClose client
             _ <- receiveMessage client
-            initMd <- initialMetadata client
+            initMd <- recvInitialMetadata client
             (RpcStatus trailMd _ _) <- waitForStatus client
             closeCall client
             return (initMd, trailMd)
