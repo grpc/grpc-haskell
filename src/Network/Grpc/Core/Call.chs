@@ -24,8 +24,50 @@
 -- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --
 --------------------------------------------------------------------------------
-{-# LANGUAGE ScopedTypeVariables, OverloadedStrings, ExistentialQuantification, RecordWildCards #-}
-module Network.Grpc.Core.Call where
+{-# LANGUAGE ScopedTypeVariables, OverloadedStrings, ExistentialQuantification, RecordWildCards, NamedFieldPuns #-}
+module Network.Grpc.Core.Call
+  ( Deadline(..)
+  , ClientContext
+  , CallOptions
+  , withAbsoluteDeadline
+  , withRelativeDeadlineSeconds
+  , withRelativeDeadlineMillis
+  , withParentContext
+  , withParentContextPropagating
+  , withMetadata
+  , withCompression
+
+  , newClientContext
+  , destroyClientContext
+  , MethodName
+  , Arg
+
+  , UnaryResult(..)
+  , callUnary
+  , callUpstream
+  , callDownstream
+  , callBidi
+  , Client
+  , Decoder
+  , Encoder
+  , Rpc
+  , runRpc
+  , joinReply
+
+  , RpcReply(..)
+  , RpcError(..)
+  , RpcStatus(..)
+
+  , initialMetadata
+  , waitForStatus
+  , sendMessage
+  , receiveMessage
+  , receiveAllMessages
+  , closeCall
+  , sendHalfClose
+  , cancelCall
+  , cancelCallWithStatus
+  ) where
 
 
 import           Control.Concurrent
@@ -146,21 +188,12 @@ newClientContext chan = do
   return (ClientContext chan cq cqt)
 
 destroyClientContext :: ClientContext -> IO ()
-destroyClientContext (ClientContext _ cq w) = do
-  completionQueueShutdown cq
-  CQ.waitWorkerTermination w
+destroyClientContext ClientContext{ccCQ, ccWorker} = do
+  completionQueueShutdown ccCQ
+  CQ.waitWorkerTermination ccWorker
 
 type MethodName = Slice
 type Arg = B.ByteString
-
--- | Run the IO function once, cache it in the MVar.
-onceMVar :: MVar (Maybe a) -> IO a -> IO a
-onceMVar mvar io = modifyMVar mvar $ \x ->
-  case x of
-    Just x' -> return (x, x')
-    Nothing -> do
-      x' <- io
-      return (Just x', x')
 
 reservedPtr :: Ptr ()
 reservedPtr = C.nullPtr
@@ -168,9 +201,9 @@ reservedPtr = C.nullPtr
 data UnaryResult a = UnaryResult [Metadata] [Metadata] a deriving Show
 
 callUnary :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (UnaryResult L.ByteString))
-callUnary ctx@(ClientContext chan cq _) co method arg = do
+callUnary ctx@ClientContext{ccChannel, ccCQ} co method arg = do
   deadline <- resolveDeadline co
-  bracket (grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline) grpcCallUnref $ \call0 -> newMVar call0 >>= \mcall -> do
+  bracket (grpcChannelCreateCall (cChannel ccChannel) C.nullPtr propagateDefaults ccCQ method (cHost ccChannel) deadline) grpcCallUnref $ \call0 -> newMVar call0 >>= \mcall -> do
     crw <- newClientReaderWriter ctx mcall
 
     sendInitOp <- opSendInitialMetadata (metadataToSend co)
@@ -201,9 +234,9 @@ callUnary ctx@(ClientContext chan cq _) co method arg = do
       RpcError err -> return (RpcError err)
 
 callDownstream :: ClientContext -> CallOptions -> MethodName -> Arg -> IO (RpcReply (Client B.ByteString L.ByteString))
-callDownstream ctx@(ClientContext chan cq _) co method arg = do
+callDownstream ctx@ClientContext{ccChannel, ccCQ} co method arg = do
   deadline <- resolveDeadline co
-  mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
+  mcall <- grpcChannelCreateCall (cChannel ccChannel) C.nullPtr propagateDefaults ccCQ method (cHost ccChannel) deadline >>= newMVar
 
   crw <- newClientReaderWriter ctx mcall
   let client = RpcOk (Client crw defaultEncoder defaultDecoder)
@@ -226,9 +259,9 @@ callDownstream ctx@(ClientContext chan cq _) co method arg = do
         RpcError err -> return (RpcError err)
 
 callUpstream :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
-callUpstream ctx@(ClientContext chan cq _) co method = do
+callUpstream ctx@ClientContext{ccChannel, ccCQ} co method = do
   deadline <- resolveDeadline co
-  mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
+  mcall <- grpcChannelCreateCall (cChannel ccChannel) C.nullPtr propagateDefaults ccCQ method (cHost ccChannel) deadline >>= newMVar
 
   crw <- newClientReaderWriter ctx mcall
   let client = RpcOk (Client crw defaultEncoder defaultDecoder)
@@ -245,9 +278,9 @@ callUpstream ctx@(ClientContext chan cq _) co method = do
         RpcError err -> return (RpcError err)
 
 callBidi :: ClientContext -> CallOptions -> MethodName -> IO (RpcReply (Client B.ByteString L.ByteString))
-callBidi ctx@(ClientContext chan cq _) co method = do
+callBidi ctx@ClientContext{ccChannel, ccCQ} co method = do
   deadline <- resolveDeadline co
-  mcall <- grpcChannelCreateCall (cChannel chan) C.nullPtr propagateDefaults cq method (cHost chan) deadline >>= newMVar
+  mcall <- grpcChannelCreateCall (cChannel ccChannel) C.nullPtr propagateDefaults ccCQ method (cHost ccChannel) deadline >>= newMVar
 
   crw <- newClientReaderWriter ctx mcall
   let client = Client crw defaultEncoder defaultDecoder
@@ -465,11 +498,6 @@ clientWaitForInitialMetadata crw@(ClientReaderWriter { .. }) = do
           return (RpcOk md)
         RpcError err ->
           return (RpcError err)
-
-clientReadInitialMetadata :: ClientReaderWriter -> IO (RpcReply (Maybe [Metadata]))
-clientReadInitialMetadata (ClientReaderWriter {..}) = do
-  md <- readIORef initialMDRef
-  return (RpcOk md)
 
 clientRead :: ClientReaderWriter -> IO (RpcReply (Maybe L.ByteString))
 clientRead crw = do
