@@ -410,9 +410,6 @@ opSendInitialMetadata elems = do
       free
   return (Op add value finish)
 
-data RpcStatus = RpcStatus [Metadata] StatusCode B.ByteString
-  deriving Show
-
 opRecvStatusOnClient :: ClientReaderWriter -> IO (OpT RpcStatus)
 opRecvStatusOnClient (ClientReaderWriter{..}) = do
   trailingMetadataArrPtr <- mallocMetadataArray
@@ -562,12 +559,12 @@ joinClientRWOp client act = do
   x <- clientRWOp client act
   joinReply x
 
-branchOnStatus :: Client req resp
+branchOnClientStatus :: Client req resp
                -> Rpc a
                -> Rpc a
                -> (StatusCode -> B.ByteString -> Rpc a)
                -> Rpc a
-branchOnStatus client onProcessing onSuccess onFail = do
+branchOnClientStatus client onProcessing onSuccess onFail = do
   status <- clientRWOp client (tryReadMVar . statusFromServer)
   case status of
     Nothing -> onProcessing
@@ -577,7 +574,7 @@ branchOnStatus client onProcessing onSuccess onFail = do
 
 throwIfErrorStatus :: Client req resp -> Rpc ()
 throwIfErrorStatus client =
-  branchOnStatus
+  branchOnClientStatus
     client
     (return ())
     (return ())
@@ -589,21 +586,18 @@ initialMetadata client = do
 
 waitForStatus :: Client req resp -> Rpc RpcStatus
 waitForStatus client = do
+  _ <- clientRWOp client clientWaitForInitialMetadata
   joinClientRWOp client clientWaitForStatus
 
 receiveMessage :: Client req resp -> Rpc (Maybe resp)
 receiveMessage client = do
-  let
-    onProcessing = do
-      msg <- joinClientRWOp client clientRead
-      case msg of
-        Nothing -> return Nothing
-        Just x -> do
-          let decoder = clientDecoder client
-          liftM Just (joinReply =<< liftIO (decoder x))
-    onSuccess = return Nothing
-    onFail code msg = throwE (StatusError code msg)
-  branchOnStatus client onProcessing onSuccess onFail
+  throwIfErrorStatus client
+  msg <- joinClientRWOp client clientRead
+  case msg of
+    Nothing -> return Nothing
+    Just x -> do
+      let decoder = clientDecoder client
+      liftM Just (joinReply =<< liftIO (decoder x))
 
 receiveAllMessages :: Client req resp -> Rpc [resp]
 receiveAllMessages client = do
@@ -632,19 +626,18 @@ sendHalfClose client = do
 
 closeCall :: Client req resp -> Rpc ()
 closeCall client = do
-  _ <- waitForStatus client
+  status <- waitForStatus client
   clientRWOp client clientCloseCall
-  throwIfErrorStatus client
+  case status of
+    RpcStatus _ StatusOk _ -> return ()
+    RpcStatus _ code detail -> throwE (StatusError code detail)
 
 -- | Called by clients to cancel an RPC on the server.
 -- Can be called multiple times, from any thread.
 cancelCall :: Client req resp -> Rpc ()
-cancelCall client =
-  branchOnStatus
-    client
-    (joinClientRWOp client clientCancelCall)
-    (return ())
-    (\code msg -> throwE (StatusError code msg))
+cancelCall client = do
+  _ <- clientRWOp client clientCancelCall
+  return ()
 
 -- | Called by clients to cancel an RPC on the server.
 -- Can be called multiple times, from any thread.
@@ -654,11 +647,10 @@ cancelCall client =
 -- remote endpoint.
 cancelCallWithStatus :: Client req resp -> StatusCode -> B.ByteString -> Rpc ()
 cancelCallWithStatus client status details =
-  branchOnStatus
-    client
-    (joinClientRWOp client (\crw -> clientCancelCallWithStatus crw status details))
-    (return ())
-    (\code msg -> throwE (StatusError code msg))
+  joinClientRWOp client (\crw -> clientCancelCallWithStatus crw status details)
+
+data RpcStatus = RpcStatus [Metadata] StatusCode B.ByteString
+  deriving Show
 
 data RpcReply a
   = RpcOk a

@@ -536,8 +536,6 @@ runTimeoutOnSleepingServerTest opts = do
         catchE
           (sendMessage client (encodeMessage req))
           (\_ -> return ())
-        _ <- initialMetadata client
-        _ <- waitForStatus client
         closeCall client
       case resp of
         RpcError (StatusError StatusDeadlineExceeded _) ->
