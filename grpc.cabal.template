@@ -6,12 +6,12 @@
   version:             0.1.0.0
   synopsis:            gRPC for Haskell
   description:         gRPC for Haskell built on the C library.
-  homepage:            http://www.grpc.io
-  license:             BSD3
+  homepage:            https://grpc.io
+  license:             Apache-2.0
   license-file:        LICENSE
   author:              Lennart Kolmodin
   maintainer:          kolmodin@google.com
-  copyright:           Google Inc.
+  copyright:           The gRPC Authors
   category:            Network
   build-type:          Simple
   cabal-version:       >=1.10
