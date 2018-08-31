@@ -60,7 +60,8 @@ install:
  - export PATH=$TRAVIS_BUILD_DIR/workspace/local/bin:$PATH
  - which c2hs
  - git clone --depth=1 --recursive https://github.com/grpc/grpc grpc
- - (cd grpc; git log -1; make shared_c static_c -j)
+ # reduce memory footprint with -jN. Using more memory may cause failures.
+ - (cd grpc; git log -1; make shared_c static_c -j2)
  # build haskell library/executables as early as we can
  - cabal new-build --only-dependencies grpc
  # only then build the time consuming interop_server.
